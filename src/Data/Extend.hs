@@ -7,6 +7,7 @@ module Data.Extend
   , extendDeclareNamedSchemas
   ) where
 
+import           Control.Monad
 import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.Aeson as Aeson
 import           Data.Bifunctor
@@ -16,6 +17,7 @@ import qualified Data.HashMap.Strict.InsOrd.Compat as IOHM
 #else
 import qualified Data.HashMap.Strict.InsOrd as IOHM
 #endif
+import           Data.Containers.ListUtils (nubOrd)
 import qualified Data.OpenApi as OpenApi
 import qualified Data.OpenApi.Declare as OpenApi
 import           Data.Proxy
@@ -100,12 +102,15 @@ extendOpenApi extRefs extSchema baseRefs baseSchema =
           Nothing -> pure (OpenApi.Inline bS) -- shouldn't happen
           Just xS -> OpenApi.Inline <$> merge xS bS
       resolveRefs (OpenApi.Inline xS) (OpenApi.Ref bRef) =
-        case IOHM.lookup (coerce bRef) baseRefs of
-          Nothing -> pure (OpenApi.Ref bRef) -- shouldn't happen
-          Just bS -> do
-            merged <- merge xS bS
-            modify (IOHM.insert (coerce bRef) merged)
-            pure $ OpenApi.Ref bRef
+        gets (IOHM.lookup (coerce bRef)) >>= \case
+          Just _ -> pure (OpenApi.Ref bRef) -- ref already processed
+          Nothing ->
+            case IOHM.lookup (coerce bRef) baseRefs of
+              Nothing -> pure (OpenApi.Ref bRef) -- shouldn't happen
+              Just bS -> do
+                merged <- merge xS bS
+                modify (IOHM.insert (coerce bRef) merged)
+                pure $ OpenApi.Ref bRef
 
       merge :: OpenApi.Schema -> OpenApi.Schema -> WriterT (Set Text) (State (OpenApi.Definitions OpenApi.Schema)) OpenApi.Schema
       merge xS bS = do
@@ -116,18 +121,35 @@ extendOpenApi extRefs extSchema baseRefs baseSchema =
 #if MIN_VERSION_openapi3(3,2,5)
             xSPropsA = IOHM.mapWithKey (\_ v -> pure v) xSProps
             bSPropsA = IOHM.mapWithKey (\_ v -> pure v) bSProps
-            mergedA = IOHM.intersectionWith
+            mergedPropsA = IOHM.intersectionWith
                       (\ma mb -> ma >>= \a -> mb >>= \b -> resolveRefs a b)
                       xSPropsA
                       bSPropsA
 #else
-            mergedA = IOHM.intersectionWith
+            mergedPropsA = IOHM.intersectionWith
                       resolveRefs
                       xSProps
                       bSProps
 #endif
-        merged <- sequenceA mergedA
-        pure bS { OpenApi._schemaProperties = merged <> xSProps <> bSProps }
+        mergedProps <- sequenceA mergedPropsA
+        let mXSItems = OpenApi._schemaItems xS
+            mBSItems = OpenApi._schemaItems bS
+        mMergedItems <- case (mXSItems, mBSItems) of
+          (Just (OpenApi.OpenApiItemsObject xIS), Just (OpenApi.OpenApiItemsObject bIS))
+            -> Just . OpenApi.OpenApiItemsObject <$> resolveRefs xIS bIS
+          (Just (OpenApi.OpenApiItemsArray xIS), Just (OpenApi.OpenApiItemsArray bIS))
+            -> Just . OpenApi.OpenApiItemsArray <$> zipWithM resolveRefs xIS bIS
+          _ -> pure mXSItems
+        pure bS
+          { OpenApi._schemaProperties = mergedProps <> xSProps <> bSProps
+          , OpenApi._schemaRequired = nubOrd $ -- TODO: depends on parent optionality
+              OpenApi._schemaRequired xS <> OpenApi._schemaRequired bS
+          , OpenApi._schemaExample =
+              mergeAesonValues
+                <$> OpenApi._schemaExample xS
+                <*> OpenApi._schemaExample bS
+          , OpenApi._schemaItems = mMergedItems
+          }
 
       ((mergedSchema, refsToRemove), mergedRefs) = runState (runWriterT $ merge extSchema baseSchema) mempty
 
