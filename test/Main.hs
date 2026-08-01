@@ -20,9 +20,7 @@ import           GHC.Generics hiding (C1)
 import           Test.Tasty
 import           Test.Tasty.HUnit
 
-import           Data.Extend
-
-import           Debug.Trace
+import           Payload.Extend
 
 main :: IO ()
 main = defaultMain $

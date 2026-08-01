@@ -6,3 +6,5 @@ base field becomes required and all base sub fields become nullable/optional.
 
 Add a wrapper type that allows for extensions that may be null
 `OptionalObj` = Maybe. Maybe alone would overwrite the object with null
+
+Rename module to Payload.Extend
