@@ -1,13 +1,20 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE CPP #-}
+{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE DeriveAnyClass #-}
 module Payload.Extend
-  ( ExtendedWith(..)
+  ( ExtendWith(..)
   , zipExtended
   , mergeAesonValues
   , extendDeclareNamedSchemas
+  , OptionalObj(..)
   ) where
 
+import           Control.Applicative
+import           Control.DeepSeq
 import           Control.Monad
+import           Control.Monad.State
+import           Control.Monad.Trans.Writer.CPS
 import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.Aeson as Aeson
 import           Data.Bifunctor
@@ -25,24 +32,25 @@ import           Data.Set (Set)
 import qualified Data.Set as Set
 import           Data.Text (Text)
 import qualified Data.Vector as V
-import           Control.Monad.Trans.Writer.CPS
-import           Control.Monad.State
+import           GHC.Generics
 
 -- | The result of joining a base type with some extension. The 'ToJSON', 'FromJSON',
 -- and 'ToSchema' instances present this type as a single object resulting from
 -- merging the JSON objects field-wise.
-data a `ExtendedWith` b = !a `ExtendedWith` !b
-  deriving (Show, Eq, Ord, Functor)
+data a `ExtendWith` b = !a `ExtendWith` !b
+  deriving (Show, Read, Eq, Ord, Functor, Generic)
+  deriving anyclass (NFData)
+infixl 6 `ExtendWith`
 
-instance Bifunctor ExtendedWith where
-  first f (a `ExtendedWith` ext) = f a `ExtendedWith` ext
+instance Bifunctor ExtendWith where
+  first f (a `ExtendWith` ext) = f a `ExtendWith` ext
   second = fmap
 
-zipExtended :: SA.Zip f => f a `ExtendedWith` f b -> f (a `ExtendedWith` b)
-zipExtended (fa `ExtendedWith` fb) = SA.zipWith ExtendedWith fa fb
+zipExtended :: SA.Zip f => f a `ExtendWith` f b -> f (a `ExtendWith` b)
+zipExtended (fa `ExtendWith` fb) = SA.zipWith ExtendWith fa fb
 
-instance (Aeson.ToJSON ext, Aeson.ToJSON base) => Aeson.ToJSON (base `ExtendedWith` ext) where
-  toJSON (base `ExtendedWith` ext) = mergeAesonValues (Aeson.toJSON ext) (Aeson.toJSON base)
+instance (Aeson.ToJSON ext, Aeson.ToJSON base) => Aeson.ToJSON (base `ExtendWith` ext) where
+  toJSON (base `ExtendWith` ext) = mergeAesonValues (Aeson.toJSON ext) (Aeson.toJSON base)
 
 mergeAesonValues :: Aeson.Value -> Aeson.Value -> Aeson.Value
 mergeAesonValues = \cases
@@ -50,10 +58,10 @@ mergeAesonValues = \cases
   (Aeson.Array a) (Aeson.Array b) -> Aeson.Array (V.zipWith mergeAesonValues a b)
   a _ -> a
 
-instance (Aeson.FromJSON ext, Aeson.FromJSON base) => Aeson.FromJSON (base `ExtendedWith` ext) where
-  parseJSON = liftA2 ExtendedWith <$> Aeson.parseJSON <*> Aeson.parseJSON
+instance (Aeson.FromJSON ext, Aeson.FromJSON base) => Aeson.FromJSON (base `ExtendWith` ext) where
+  parseJSON = liftA2 ExtendWith <$> Aeson.parseJSON <*> Aeson.parseJSON
 
-instance (OpenApi.ToSchema ext, OpenApi.ToSchema base) => OpenApi.ToSchema (base `ExtendedWith` ext) where
+instance (OpenApi.ToSchema ext, OpenApi.ToSchema base) => OpenApi.ToSchema (base `ExtendWith` ext) where
   declareNamedSchema _ =
     extendDeclareNamedSchemas
       (OpenApi.declareNamedSchema (Proxy @ext))
@@ -191,3 +199,74 @@ data OptionalityInherit
   = OptExt
   | OptBase
   | NoOpt
+
+-- | A wrapper used for extension objects that are optional. From the API
+-- contract perspective,
+--
+-- @
+-- a `ExtendWith` OptionalObj Nothing == a
+-- @
+--
+-- This allows you to have a response that contains the union of a set of
+-- extensions, each corresponding to constructors of a sum type.
+-- Using this type for a request body is not supported.
+--
+-- @
+-- data Sum = A ObjA | B ObjB | C ObjC
+-- data Base = Base {...}
+-- data ObjAExt = ObjAExt {...}
+-- data ObjBExt = ObjBExt {...}
+-- data ObjCExt = ObjCExt {...}
+--
+-- type ResponseForA = Base `ExtendWith` ObjAExt
+-- type ResponseUnion = Base
+--   `ExtendWith` OptionalObj ObjAExt
+--   `ExtendWith` OptionalObj ObjBExt
+--   `ExtendWith` OptionalObj ObjCExt
+-- @
+newtype OptionalObj a = OptionalObj { unOptionalObj :: Maybe a }
+  deriving stock Generic
+  deriving newtype
+    (Functor, Applicative, Monad, Eq, Ord, Show, Read, NFData, Alternative, Semigroup, Monoid)
+
+instance Aeson.ToJSON a => Aeson.ToJSON (OptionalObj a) where
+  toJSON (OptionalObj a) =
+    case Aeson.toJSON a of
+      Aeson.Null -> Aeson.object []
+      o -> o
+
+-- It's unclear how best to handle this. For now the type is encode only.
+-- instance (Aeson.FromJSON a, OpenApi.ToSchema a) => Aeson.FromJSON (OptionalObj a) where
+--   parseJSON v =
+    --
+    -- This implementation checks that the JSON value has the expected shape
+    -- before committing to parsing the object. If not, then any parse failures
+    -- are discarded.
+    -- let (defs, schema) =
+    --       OpenApi.runDeclare (OpenApi.declareSchema (Proxy @a)) mempty
+    --     validationResult =
+    --       OpenApi.validateJSON
+    --         defs
+    --         (schema & everywhere additionalProperties ?~ OpenApi.AdditionalPropertiesAllowed True)
+    --         v
+    -- in case validationResult of
+    --   [] -> OptionalObj <$> Aeson.parseJSON v
+    --   errs -> traceShow errs pure (OptionalObj Nothing)
+
+    -- OptionalObj <$> (Aeson.parseJSON v <|> pure Nothing)
+
+    -- let schema = OpenApi.undeclare (OpenApi.declareSchema (Proxy @(OptionalObj a)))
+    --     topFields = IOHM.keys $ OpenApi._schemaProperties schema
+    -- in case v of
+    --     Aeson.Object o
+    --       | all (\k -> not $ KeyMap.member (Key.fromText k) o) topFields ->
+    --           pure $ OptionalObj Nothing
+    --     _ -> OptionalObj <$> Aeson.parseJSON v
+
+instance OpenApi.ToSchema a => OpenApi.ToSchema (OptionalObj a) where
+  declareNamedSchema _ =
+    (\ns -> ns
+      {OpenApi._namedSchemaSchema = (OpenApi._namedSchemaSchema ns)
+        { OpenApi._schemaRequired = mempty }
+      }
+    ) <$> OpenApi.declareNamedSchema (Proxy @(Maybe a))

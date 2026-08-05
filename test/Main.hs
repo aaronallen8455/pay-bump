@@ -3,10 +3,13 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE TemplateHaskell #-}
 module Main (main) where
 
 import           Control.Monad
 import           Data.Aeson
+import           Data.Aeson.TH
+import           Data.Aeson.Types
 import           Data.Function
 #if MIN_VERSION_openapi3(3,2,5)
 import qualified Data.HashMap.Strict.InsOrd.Compat as IOHM
@@ -22,23 +25,67 @@ import           Test.Tasty.HUnit
 
 import           Payload.Extend
 
+data CO1 = CO1
+  { b1f1 :: String
+  , b1f2 :: Bool
+  , b1f3 :: CO2
+  , e1f1 :: Maybe Int
+  } deriving stock (Generic, Eq, Show)
+    deriving anyclass ToSchema
+
+data CO2 = CO2
+  { b2f1 :: [CO3]
+  , b2f2 :: Maybe String
+  , e2f1 :: Maybe Bool
+  } deriving stock (Generic, Eq, Show)
+    deriving anyclass ToSchema
+
+data CO3 = CO3
+  { b3f1 :: Double
+  , e3f1 :: Maybe Bool
+  } deriving stock (Generic, Eq, Show)
+    deriving anyclass ToSchema
+
+$(deriveJSON defaultOptions { omitNothingFields = True } 'CO3)
+$(deriveJSON defaultOptions { omitNothingFields = True } 'CO2)
+$(deriveJSON defaultOptions { omitNothingFields = True } 'CO1)
+
 main :: IO ()
 main = defaultMain $
   testGroup "pay-bump"
     [ testCase "ToJSON" $
-        toJSON (b1 `ExtendedWith` e1)
+        toJSON (b1 `ExtendWith` e1)
           @?= toJSON c1
+    , testCase "FromJSON" $
+        parseEither (parseJSON @(B1 `ExtendWith` E1)) (toJSON (b1 `ExtendWith` e1))
+          @?= Right (b1 `ExtendWith` e1)
     , testCase "ToSchema" $
         eqSchema
-          (toInlinedSchema (Proxy @(B1 `ExtendedWith` E1)))
+          (toInlinedSchema (Proxy @(B1 `ExtendWith` E1)))
           (toInlinedSchema (Proxy @C1))
+    , testCase "ToJSON OptionalObj Nothing" $
+        toJSON (b1 `ExtendWith` OptionalObj @E1 Nothing)
+          @?= toJSON b1
+    , testCase "ToJSON OptionalObj Just" $
+        toJSON (b1 `ExtendWith` OptionalObj (Just e1))
+          @?= toJSON co1
+    -- , testCase "FromJSON OptionalObj Nothing" $
+    --     fmap toJSON (parseEither (parseJSON @(B1 `ExtendWith` OptionalObj E1)) (toJSON (b1 `ExtendWith` OptionalObj @E1 Nothing)))
+    --       @?= fmap toJSON (parseEither (parseJSON @CO1) (toJSON (b1 `ExtendWith` OptionalObj @E1 Nothing)))
+    -- , testCase "FromJSON OptionalObj Just" $
+    --     parseEither (parseJSON @(B1 `ExtendWith` OptionalObj E1)) (toJSON (b1 `ExtendWith` OptionalObj (Just e1)))
+    --       @?= Right (b1 `ExtendWith` OptionalObj (Just e1))
+    , testCase "ToSchema OptionalObj" $
+        eqSchema
+          (toInlinedSchema (Proxy @(B1 `ExtendWith` OptionalObj E1)))
+          (toInlinedSchema (Proxy @CO1))
     ]
 
 data B1 = B1
   { b1f1 :: String
   , b1f2 :: Bool
   , b1f3 :: B2
-  } deriving stock Generic
+  } deriving stock (Generic, Eq, Show)
     deriving anyclass (ToJSON, FromJSON, ToSchema)
 
 b1 :: B1
@@ -51,7 +98,7 @@ b1 = B1
 data E1 = E1
   { e1f1 :: Int
   , b1f3 :: E2
-  } deriving stock Generic
+  } deriving stock (Generic, Eq, Show)
     deriving anyclass (ToJSON, FromJSON, ToSchema)
 
 e1 :: E1
@@ -65,7 +112,7 @@ data C1 = C1
   , b1f2 :: Bool
   , b1f3 :: C2
   , e1f1 :: Int
-  } deriving stock Generic
+  } deriving stock (Generic, Eq, Show)
     deriving anyclass (ToJSON, FromJSON, ToSchema)
 
 c1 :: C1
@@ -76,10 +123,18 @@ c1 = C1
   , e1f1 = e1.e1f1
   }
 
+co1 :: CO1
+co1 = CO1
+  { b1f1 = b1.b1f1
+  , b1f2 = b1.b1f2
+  , b1f3 = co2
+  , e1f1 = Just e1.e1f1
+  }
+
 data B2 = B2
   { b2f1 :: [B3]
   , b2f2 :: Maybe String
-  } deriving stock Generic
+  } deriving stock (Generic, Eq, Show)
     deriving anyclass (ToJSON, FromJSON, ToSchema)
 
 b2 :: B2
@@ -91,7 +146,7 @@ b2 = B2
 data E2 = E2
   { b2f1 :: [E3]
   , e2f1 :: Bool
-  } deriving stock Generic
+  } deriving stock (Generic, Eq, Show)
     deriving anyclass (ToJSON, FromJSON, ToSchema)
 
 e2 :: E2
@@ -104,7 +159,7 @@ data C2 = C2
   { b2f1 :: [C3]
   , b2f2 :: Maybe String
   , e2f1 :: Bool
-  } deriving stock Generic
+  } deriving stock (Generic, Eq, Show)
     deriving anyclass (ToJSON, FromJSON, ToSchema)
 
 c2 :: C2
@@ -114,24 +169,31 @@ c2 = C2
   , e2f1 = e2.e2f1
   }
 
+co2 :: CO2
+co2 = CO2
+  { b2f1 = [co3_1, co3_2]
+  , b2f2 = b2.b2f2
+  , e2f1 = Just e2.e2f1
+  }
+
 newtype B3 = B3
-  { b3f1 :: ()
-  } deriving stock Generic
+  { b3f1 :: Double
+  } deriving stock (Generic, Eq, Show)
     deriving anyclass (ToJSON, FromJSON, ToSchema)
 
 b3_1 :: B3
 b3_1 = B3
-  { b3f1 = ()
+  { b3f1 = 3.1
   }
 
 b3_2 :: B3
 b3_2 = B3
-  { b3f1 = ()
+  { b3f1 = 3.2
   }
 
 newtype E3 = E3
   { e3f1 :: Maybe Bool
-  } deriving stock Generic
+  } deriving stock (Generic, Eq, Show)
     deriving anyclass (ToJSON, FromJSON, ToSchema)
 
 e3_1 :: E3
@@ -145,9 +207,9 @@ e3_2 = E3
   }
 
 data C3 = C3
-  { b3f1 :: ()
+  { b3f1 :: Double
   , e3f1 :: Maybe Bool
-  } deriving stock Generic
+  } deriving stock (Generic, Eq, Show)
     deriving anyclass (ToJSON, FromJSON, ToSchema)
 
 c3_1 :: C3
@@ -162,12 +224,24 @@ c3_2 = C3
   , e3f1 = e3_2.e3f1
   }
 
+co3_1 :: CO3
+co3_1 = CO3
+  { b3f1 = b3_1.b3f1
+  , e3f1 = e3_1.e3f1
+  }
+
+co3_2 :: CO3
+co3_2 = CO3
+  { b3f1 = b3_2.b3f1
+  , e3f1 = e3_2.e3f1
+  }
+
 eqSchema :: Schema -> Schema -> Assertion
 eqSchema a b
   = do
   a { _schemaProperties = mempty, _schemaRequired = mempty }
     @?= b { _schemaProperties = mempty, _schemaRequired = mempty }
-  propsMatch
+  void propsMatch
   List.sort (_schemaRequired a) @?= List.sort (_schemaRequired b)
   where
     propsMatch = do

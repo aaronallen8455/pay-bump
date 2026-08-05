@@ -30,7 +30,8 @@ library
                       transformers,
                       mtl,
                       text,
-                      semialign
+                      semialign,
+                      deepseq
     hs-source-dirs:   src
     default-language: GHC2021
 

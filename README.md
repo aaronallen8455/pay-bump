@@ -8,8 +8,8 @@ easily extend it to meet the various needs of the API with minimal boilerplate.
 
 This library presents a pattern for doing so without any fancy types or tricks.
 You simply define the base payload and the various extensions separately and
-then use the `ExtendedWith` data type to join the base with a chosen extension.
-`ExtendedWith` has `ToJSON`, `FromJSON`, and `ToSchema` (from `openapi3`) instances
+then use the `ExtendWith` data type to join the base with a chosen extension.
+`ExtendWith` has `ToJSON`, `FromJSON`, and `ToSchema` (from `openapi3`) instances
 that present the two distinct types as a single JSON entity by merging fields
 from the extension object into the base object, including nested objects.
 
@@ -43,7 +43,7 @@ data BarExt = BarExt
     deriving anyclass (ToJSON, FromJSON, ToSchema)
 
 -- The payload for some endpoint
-type Payload = Base `ExtendedWith` Ext
+type Payload = Base `ExtendWith` Ext
 ```
 
 The contract for the resulting JSON object will have this shape:
