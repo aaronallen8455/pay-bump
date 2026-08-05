@@ -49,4 +49,5 @@ test-suite pay-bump-test
         openapi3,
         aeson,
         tasty,
-        tasty-hunit
+        tasty-hunit,
+        insert-ordered-containers

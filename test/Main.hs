@@ -36,6 +36,7 @@ data CO1 = CO1
 data CO2 = CO2
   { b2f1 :: [CO3]
   , b2f2 :: Maybe String
+  , b2f3 :: CO4
   , e2f1 :: Maybe Bool
   } deriving stock (Generic, Eq, Show)
     deriving anyclass ToSchema
@@ -46,6 +47,20 @@ data CO3 = CO3
   } deriving stock (Generic, Eq, Show)
     deriving anyclass ToSchema
 
+data CO4 = CO4
+  { b4f1 :: String
+  , e4f1 :: Maybe String
+  , e4f2 :: Maybe CO5
+  } deriving stock (Generic, Eq, Show)
+    deriving anyclass ToSchema
+
+newtype CO5 = CO5
+  { e5f1 :: String
+  } deriving stock (Generic, Eq, Show)
+    deriving anyclass ToSchema
+
+$(deriveJSON defaultOptions { omitNothingFields = True } 'CO5)
+$(deriveJSON defaultOptions { omitNothingFields = True } 'CO4)
 $(deriveJSON defaultOptions { omitNothingFields = True } 'CO3)
 $(deriveJSON defaultOptions { omitNothingFields = True } 'CO2)
 $(deriveJSON defaultOptions { omitNothingFields = True } 'CO1)
@@ -134,6 +149,7 @@ co1 = CO1
 data B2 = B2
   { b2f1 :: [B3]
   , b2f2 :: Maybe String
+  , b2f3 :: B4
   } deriving stock (Generic, Eq, Show)
     deriving anyclass (ToJSON, FromJSON, ToSchema)
 
@@ -141,10 +157,12 @@ b2 :: B2
 b2 = B2
   { b2f1 = [b3_1, b3_2]
   , b2f2 = Just "b2f2"
+  , b2f3 = b4
   }
 
 data E2 = E2
   { b2f1 :: [E3]
+  , b2f3 :: Maybe E4
   , e2f1 :: Bool
   } deriving stock (Generic, Eq, Show)
     deriving anyclass (ToJSON, FromJSON, ToSchema)
@@ -152,12 +170,14 @@ data E2 = E2
 e2 :: E2
 e2 = E2
   { b2f1 = [e3_1, e3_2]
+  , b2f3 = Just e4
   , e2f1 = False
   }
 
 data C2 = C2
   { b2f1 :: [C3]
   , b2f2 :: Maybe String
+  , b2f3 :: C4
   , e2f1 :: Bool
   } deriving stock (Generic, Eq, Show)
     deriving anyclass (ToJSON, FromJSON, ToSchema)
@@ -166,6 +186,7 @@ c2 :: C2
 c2 = C2
   { b2f1 = [c3_1, c3_2]
   , b2f2 = b2.b2f2
+  , b2f3 = c4
   , e2f1 = e2.e2f1
   }
 
@@ -173,6 +194,7 @@ co2 :: CO2
 co2 = CO2
   { b2f1 = [co3_1, co3_2]
   , b2f2 = b2.b2f2
+  , b2f3 = co4
   , e2f1 = Just e2.e2f1
   }
 
@@ -235,6 +257,58 @@ co3_2 = CO3
   { b3f1 = b3_2.b3f1
   , e3f1 = e3_2.e3f1
   }
+
+newtype B4 = B4
+  { b4f1 :: String
+  } deriving stock (Generic, Eq, Show)
+    deriving anyclass (ToJSON, FromJSON, ToSchema)
+
+b4 :: B4
+b4 = B4 "b4f1"
+
+data E4 = E4
+  { e4f1 :: String
+  , e4f2 :: E5
+  } deriving stock (Generic, Eq, Show)
+    deriving anyclass (ToJSON, FromJSON, ToSchema)
+
+e4 :: E4
+e4 = E4
+  { e4f1 = "e4f1"
+  , e4f2 = e5
+  }
+
+data C4 = C4
+  { b4f1 :: String
+  , e4f1 :: Maybe String
+  , e4f2 :: Maybe E5
+  } deriving stock (Generic, Eq, Show)
+    deriving anyclass (ToJSON, FromJSON, ToSchema)
+
+c4 :: C4
+c4 = C4
+  { b4f1 = b4.b4f1
+  , e4f1 = Just e4.e4f1
+  , e4f2 = Just e5
+  }
+
+co4 :: CO4
+co4 = CO4
+  { b4f1 = b4.b4f1
+  , e4f1 = Just e4.e4f1
+  , e4f2 = Just co5
+  }
+
+co5 :: CO5
+co5 = CO5 "e5f1"
+
+newtype E5 = E5
+  { e5f1 :: String
+  } deriving stock (Generic, Eq, Show)
+    deriving anyclass (ToJSON, FromJSON, ToSchema)
+
+e5 :: E5
+e5 = E5 "e5f1"
 
 eqSchema :: Schema -> Schema -> Assertion
 eqSchema a b
