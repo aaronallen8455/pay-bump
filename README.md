@@ -1,9 +1,9 @@
 # pay-bump :money_with_wings:
 
-Let's say you have a web server with a JSON API where the response or request
-payload for a group of endpoints share the same basic structure but with each
-having additional fields specific to that endpoint. You wish to define a shared
-base record in Haskell to represent this shared payload and then be able to
+You have a web server with a JSON API where the response or request payload for
+a group of endpoints share the same basic structure but with each having
+additional fields specific to that endpoint. You wish to define a shared base
+record in Haskell to represent the shared portion payload and then be able to
 easily extend it to meet the various needs of the API with minimal boilerplate.
 
 This library presents a pattern for doing so without any fancy types or tricks.
@@ -16,6 +16,8 @@ from the extension object into the base object, including nested objects.
 ### Basic Example
 
 ```haskell
+import Payload.Extend (ExtendWith(..))
+
 -- The base payload
 data Base = Base
   { foo :: Text
