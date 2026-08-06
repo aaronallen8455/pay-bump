@@ -40,7 +40,7 @@ import           GHC.Generics
 data a `ExtendWith` b = !a `ExtendWith` !b
   deriving (Show, Read, Eq, Ord, Functor, Generic)
   deriving anyclass (NFData)
-infixl 6 `ExtendWith`
+infixr 6 `ExtendWith`
 
 instance Bifunctor ExtendWith where
   first f (a `ExtendWith` ext) = f a `ExtendWith` ext
@@ -165,7 +165,7 @@ extendOpenApi extRefs extSchema baseRefs baseSchema =
           (Just (OpenApi.OpenApiItemsArray xIS), Just (OpenApi.OpenApiItemsArray bIS))
             -> Just . OpenApi.OpenApiItemsArray <$> zipWithM (resolveRefs optInherit) xIS bIS
           _ -> pure mXSItems
-        pure bS
+        pure xS
           { OpenApi._schemaProperties = mergedProps <> xSProps <> bSProps
           , OpenApi._schemaRequired =
               -- If the extension schema is for an optional field And the base
@@ -184,6 +184,10 @@ extendOpenApi extRefs extSchema baseRefs baseSchema =
                 <$> OpenApi._schemaExample xS
                 <*> OpenApi._schemaExample bS
           , OpenApi._schemaItems = mMergedItems
+          , OpenApi._schemaDescription = OpenApi._schemaDescription xS <|> OpenApi._schemaDescription bS
+          , OpenApi._schemaTitle = OpenApi._schemaTitle xS <|> OpenApi._schemaTitle bS
+          , OpenApi._schemaXml = OpenApi._schemaXml xS <|> OpenApi._schemaXml bS
+          , OpenApi._schemaExternalDocs = OpenApi._schemaExternalDocs xS <|> OpenApi._schemaExternalDocs bS
           }
 
       ((mergedSchema, refsToRemove), mergedRefs) =
