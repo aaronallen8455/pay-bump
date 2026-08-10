@@ -78,21 +78,21 @@ main = defaultMain $
         eqSchema
           (toInlinedSchema (Proxy @(B1 `ExtendWith` E1)))
           (toInlinedSchema (Proxy @C1))
-    , testCase "ToJSON OptionalObj Nothing" $
-        toJSON (b1 `ExtendWith` OptionalObj @E1 Nothing)
+    , testCase "ToJSON OptionalExt Nothing" $
+        toJSON (b1 `ExtendWith` OptionalExt @E1 Nothing)
           @?= toJSON b1
-    , testCase "ToJSON OptionalObj Just" $
-        toJSON (b1 `ExtendWith` OptionalObj (Just e1))
+    , testCase "ToJSON OptionalExt Just" $
+        toJSON (b1 `ExtendWith` OptionalExt (Just e1))
           @?= toJSON co1
-    -- , testCase "FromJSON OptionalObj Nothing" $
-    --     fmap toJSON (parseEither (parseJSON @(B1 `ExtendWith` OptionalObj E1)) (toJSON (b1 `ExtendWith` OptionalObj @E1 Nothing)))
-    --       @?= fmap toJSON (parseEither (parseJSON @CO1) (toJSON (b1 `ExtendWith` OptionalObj @E1 Nothing)))
-    -- , testCase "FromJSON OptionalObj Just" $
-    --     parseEither (parseJSON @(B1 `ExtendWith` OptionalObj E1)) (toJSON (b1 `ExtendWith` OptionalObj (Just e1)))
-    --       @?= Right (b1 `ExtendWith` OptionalObj (Just e1))
-    , testCase "ToSchema OptionalObj" $
+    -- , testCase "FromJSON OptionalExt Nothing" $
+    --     fmap toJSON (parseEither (parseJSON @(B1 `ExtendWith` OptionalExt E1)) (toJSON (b1 `ExtendWith` OptionalExt @E1 Nothing)))
+    --       @?= fmap toJSON (parseEither (parseJSON @CO1) (toJSON (b1 `ExtendWith` OptionalExt @E1 Nothing)))
+    -- , testCase "FromJSON OptionalExt Just" $
+    --     parseEither (parseJSON @(B1 `ExtendWith` OptionalExt E1)) (toJSON (b1 `ExtendWith` OptionalExt (Just e1)))
+    --       @?= Right (b1 `ExtendWith` OptionalExt (Just e1))
+    , testCase "ToSchema OptionalExt" $
         eqSchema
-          (toInlinedSchema (Proxy @(B1 `ExtendWith` OptionalObj E1)))
+          (toInlinedSchema (Proxy @(B1 `ExtendWith` OptionalExt E1)))
           (toInlinedSchema (Proxy @CO1))
     ]
 
