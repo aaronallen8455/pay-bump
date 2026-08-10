@@ -66,4 +66,6 @@ The contract for the resulting JSON object will have this shape:
 - Extension fields corresponding to base fields should have the same
   optionality and nullability as the base field. If they don't then the resulting
   OpenApi schema will not accurately represent all possible values.
+- JSON decoding will fail if an extension field is shadowing a base field and
+  the value from the extension field cannot be parsed as the base field.
 - OpenApi schema properties `oneOf`, `allOf`, `anyOf`, `not` are not yet supported.
