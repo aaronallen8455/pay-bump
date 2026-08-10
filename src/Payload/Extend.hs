@@ -3,8 +3,10 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE DataKinds #-}
 module Payload.Extend
   ( ExtendWith(..)
+  , NamedExtension(..)
   , zipExtended
   , mergeAesonValues
   , extendDeclareNamedSchemas
@@ -33,15 +35,17 @@ import           Data.Proxy
 import qualified Data.Semialign as SA
 import qualified Data.Set as Set
 import           Data.Text (Text)
+import qualified Data.Text as T
 import           Data.Traversable
 import           Data.Tuple
 import qualified Data.Vector as V
 import           GHC.Generics
+import           GHC.TypeLits
 
 -- | The result of joining a base type with some extension. The 'ToJSON', 'FromJSON',
 -- and 'ToSchema' instances present this type as a single object resulting from
 -- merging the JSON objects field-wise.
-data a `ExtendWith` b = !a `ExtendWith` !b
+data base `ExtendWith` ext = !base `ExtendWith` !ext
   deriving (Show, Read, Eq, Ord, Functor, Generic)
   deriving anyclass (NFData)
 infixr 6 `ExtendWith`
@@ -49,6 +53,11 @@ infixr 6 `ExtendWith`
 instance Bifunctor ExtendWith where
   first f (a `ExtendWith` ext) = f a `ExtendWith` ext
   second = fmap
+
+-- | Allows for specifying a name to be used for the OpenApi schema declaration.
+newtype NamedExtension (name :: Symbol) base ext = NamedExtension (base `ExtendWith` ext)
+  deriving (Show, Read, Eq, Ord)
+  deriving newtype (Aeson.ToJSON, Aeson.FromJSON, Functor, NFData)
 
 zipExtended :: SA.Zip f => f a `ExtendWith` f b -> f (a `ExtendWith` b)
 zipExtended (fa `ExtendWith` fb) = SA.zipWith ExtendWith fa fb
@@ -67,15 +76,22 @@ instance (Aeson.FromJSON ext, Aeson.FromJSON base) => Aeson.FromJSON (base `Exte
 
 instance (OpenApi.ToSchema ext, OpenApi.ToSchema base) => OpenApi.ToSchema (base `ExtendWith` ext) where
   declareNamedSchema _ =
-    extendDeclareNamedSchemas
+    extendDeclareNamedSchemas Nothing
+      (OpenApi.declareNamedSchema (Proxy @ext))
+      (OpenApi.declareNamedSchema (Proxy @base))
+
+instance (OpenApi.ToSchema ext, OpenApi.ToSchema base, KnownSymbol name) => OpenApi.ToSchema (NamedExtension name base ext) where
+  declareNamedSchema _ =
+    extendDeclareNamedSchemas (Just . T.pack $ symbolVal (Proxy @name))
       (OpenApi.declareNamedSchema (Proxy @ext))
       (OpenApi.declareNamedSchema (Proxy @base))
 
 extendDeclareNamedSchemas
-  :: OpenApi.Declare (OpenApi.Definitions OpenApi.Schema) OpenApi.NamedSchema
+  :: Maybe Text
   -> OpenApi.Declare (OpenApi.Definitions OpenApi.Schema) OpenApi.NamedSchema
   -> OpenApi.Declare (OpenApi.Definitions OpenApi.Schema) OpenApi.NamedSchema
-extendDeclareNamedSchemas declareExt declareBase = do
+  -> OpenApi.Declare (OpenApi.Definitions OpenApi.Schema) OpenApi.NamedSchema
+extendDeclareNamedSchemas mName declareExt declareBase = do
   let (extRefs, namedExtSchema) = OpenApi.runDeclare declareExt mempty
       (baseRefs, baseSchema) = OpenApi.runDeclare declareBase mempty
       (mergedSchema, mergedRefs) =
@@ -85,7 +101,14 @@ extendDeclareNamedSchemas declareExt declareBase = do
           baseRefs
           (OpenApi._namedSchemaSchema baseSchema)
   OpenApi.declare mergedRefs
-  pure (baseSchema { OpenApi._namedSchemaSchema = mergedSchema })
+  let mDefaultName = do
+        baseName <- OpenApi._namedSchemaName baseSchema
+        extName <- OpenApi._namedSchemaName namedExtSchema
+        Just $ baseName <> "+" <> extName
+  pure namedExtSchema
+    { OpenApi._namedSchemaSchema = mergedSchema
+    , OpenApi._namedSchemaName = mName <|> mDefaultName
+    }
 
 extendOpenApi
   :: OpenApi.Definitions OpenApi.Schema
