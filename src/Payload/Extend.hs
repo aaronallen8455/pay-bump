@@ -2,6 +2,7 @@
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE OverloadedStrings #-}
 module Payload.Extend
   ( ExtendWith(..)
   , zipExtended
@@ -14,23 +15,26 @@ import           Control.Applicative
 import           Control.DeepSeq
 import           Control.Monad
 import           Control.Monad.State
-import           Control.Monad.Trans.Writer.CPS
+import           Control.Monad.Trans.Maybe
 import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.Aeson as Aeson
 import           Data.Bifunctor
 import           Data.Coerce
+import qualified Data.Generics as Syb
 #if MIN_VERSION_openapi3(3,2,5)
 import qualified Data.HashMap.Strict.InsOrd.Compat as IOHM
 #else
 import qualified Data.HashMap.Strict.InsOrd as IOHM
 #endif
+import qualified Data.Map.Strict as Map
 import qualified Data.OpenApi as OpenApi
 import qualified Data.OpenApi.Declare as OpenApi
 import           Data.Proxy
 import qualified Data.Semialign as SA
-import           Data.Set (Set)
 import qualified Data.Set as Set
 import           Data.Text (Text)
+import           Data.Traversable
+import           Data.Tuple
 import qualified Data.Vector as V
 import           GHC.Generics
 
@@ -92,39 +96,35 @@ extendOpenApi
 extendOpenApi extRefs extSchema baseRefs baseSchema =
   let resolveRefs optInherit (OpenApi.Inline xS) (OpenApi.Inline bS) =
         OpenApi.Inline <$> merge optInherit xS bS
-      resolveRefs optInherit (OpenApi.Ref xRef) (OpenApi.Ref bRef) =
-        gets (IOHM.lookup (coerce bRef)) >>= \case
-          Just _ -> pure (OpenApi.Ref bRef) -- ref already processed
+      -- This uses the ref name from the base schema for the resulting merged schema.
+      -- Should make a hybrid of them so that there are no unintended overrides
+      resolveRefs optInherit (OpenApi.Ref xRef) (OpenApi.Ref bRef) = do
+        let mergedRef = coerce (coerce bRef <> "+" <> coerce xRef :: Text)
+        gets (IOHM.lookup $ coerce mergedRef) >>= \case
+          Just _ -> pure (OpenApi.Ref mergedRef) -- ref already processed
           Nothing -> do
             let mXS = IOHM.lookup (coerce xRef) extRefs
                 mBS = IOHM.lookup (coerce bRef) baseRefs
             case (mXS, mBS) of
               (Just xS, Just bS) -> do
                 merged <- merge optInherit xS bS
-                tell (Set.singleton (coerce xRef))
-                modify (IOHM.insert (coerce bRef) merged)
-                pure $ OpenApi.Ref bRef
+                modify (IOHM.insert (coerce mergedRef) merged)
+                pure $ OpenApi.Ref mergedRef
               _ -> pure $ OpenApi.Ref bRef -- shouldn't happen
       resolveRefs optInherit (OpenApi.Ref xRef) (OpenApi.Inline bS) =
         case IOHM.lookup (coerce xRef) extRefs of
           Nothing -> pure (OpenApi.Inline bS) -- shouldn't happen
           Just xS -> OpenApi.Inline <$> merge optInherit xS bS
       resolveRefs optInherit (OpenApi.Inline xS) (OpenApi.Ref bRef) =
-        gets (IOHM.lookup (coerce bRef)) >>= \case
-          Just _ -> pure (OpenApi.Ref bRef) -- ref already processed
-          Nothing ->
-            case IOHM.lookup (coerce bRef) baseRefs of
-              Nothing -> pure (OpenApi.Ref bRef) -- shouldn't happen
-              Just bS -> do
-                merged <- merge optInherit xS bS
-                modify (IOHM.insert (coerce bRef) merged)
-                pure $ OpenApi.Ref bRef
+        case IOHM.lookup (coerce bRef) baseRefs of
+          Nothing -> pure (OpenApi.Ref bRef) -- shouldn't happen
+          Just bS -> OpenApi.Inline <$> merge optInherit xS bS
 
       merge
         :: OptionalityInherit
         -> OpenApi.Schema
         -> OpenApi.Schema
-        -> WriterT (Set Text) (State (OpenApi.Definitions OpenApi.Schema)) OpenApi.Schema
+        -> State (OpenApi.Definitions OpenApi.Schema) OpenApi.Schema
       merge optInherit xS bS = do
         -- There's some hoop jumping due to the annoying monomorphic types of
         -- the compat wrapper. Thankfully they did not make 'mapWithKey' monomorphic.
@@ -165,6 +165,24 @@ extendOpenApi extRefs extSchema baseRefs baseSchema =
           (Just (OpenApi.OpenApiItemsArray xIS), Just (OpenApi.OpenApiItemsArray bIS))
             -> Just . OpenApi.OpenApiItemsArray <$> zipWithM (resolveRefs optInherit) xIS bIS
           _ -> pure mXSItems
+        mMergedOneOf :: Maybe (Map.Map Text Text, [OpenApi.Referenced OpenApi.Schema]) <-
+          fmap (<|> ((mempty,) <$> OpenApi._schemaOneOf xS))
+          . runMaybeT
+          $ do
+              xOneOf <- hoistMaybe $ OpenApi._schemaOneOf xS
+              OpenApi.Discriminator _ bMap <- hoistMaybe $ OpenApi._schemaDiscriminator bS
+              OpenApi.Discriminator _ xMap <- hoistMaybe $ OpenApi._schemaDiscriminator xS
+              let xMapSwap = Map.fromList $ swap <$> IOHM.toList xMap
+              fmap sequence . for xOneOf $ \case
+                OpenApi.Ref (OpenApi.Reference xRef)
+                  | Just key <- Map.lookup xRef xMapSwap
+                  , Just bRef <- IOHM.lookup key bMap
+                  -> do
+                    OpenApi.Ref newRef <- lift $ resolveRefs optInherit
+                      (OpenApi.Ref (OpenApi.Reference xRef))
+                      (OpenApi.Ref (OpenApi.Reference bRef))
+                    pure (Map.singleton xRef (coerce newRef), OpenApi.Ref newRef)
+                x -> pure (mempty, x)
         pure xS
           { OpenApi._schemaProperties = mergedProps <> xSProps <> bSProps
           , OpenApi._schemaRequired =
@@ -188,15 +206,27 @@ extendOpenApi extRefs extSchema baseRefs baseSchema =
           , OpenApi._schemaTitle = OpenApi._schemaTitle xS <|> OpenApi._schemaTitle bS
           , OpenApi._schemaXml = OpenApi._schemaXml xS <|> OpenApi._schemaXml bS
           , OpenApi._schemaExternalDocs = OpenApi._schemaExternalDocs xS <|> OpenApi._schemaExternalDocs bS
+          , OpenApi._schemaDiscriminator = do
+              OpenApi.Discriminator k xMap <- OpenApi._schemaDiscriminator xS
+              (mergeMapping, _) <- mMergedOneOf
+              let mergedMap = IOHM.map (\key -> Map.findWithDefault key key mergeMapping) xMap
+              pure $ OpenApi.Discriminator k mergedMap
+          , OpenApi._schemaOneOf = snd <$> mMergedOneOf
           }
 
-      ((mergedSchema, refsToRemove), mergedRefs) =
-        runState (runWriterT $ merge NoOpt extSchema baseSchema) mempty
+      (mergedSchema, mergedRefs) =
+        runState (merge NoOpt extSchema baseSchema) mempty
+      -- Get all the schema references from the merged result so that schemas
+      -- that are no longer references can be dropped from the reference map.
+      remainingRefs =
+        Syb.everything (<>)
+          (Syb.mkQ Set.empty (\(OpenApi.Reference ref) -> Set.singleton ref))
+          (mergedSchema, mergedRefs)
 
   in ( mergedSchema
      , mergedRefs
-        <> IOHM.filterWithKey (\k _ -> Set.notMember k refsToRemove) extRefs
-        <> baseRefs
+        <> IOHM.filterWithKey (\k _ -> Set.member k remainingRefs) extRefs
+        <> IOHM.filterWithKey (\k _ -> Set.member k remainingRefs) baseRefs
      )
 
 data OptionalityInherit

@@ -31,7 +31,8 @@ library
                       mtl,
                       text,
                       semialign,
-                      deepseq
+                      deepseq,
+                      syb
     hs-source-dirs:   src
     default-language: GHC2021
 
