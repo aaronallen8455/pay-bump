@@ -116,11 +116,11 @@ extendOpenApi
   -> OpenApi.Schema
   -> (OpenApi.Schema, OpenApi.Definitions OpenApi.Schema)
 extendOpenApi extRefs extSchema baseRefs baseSchema =
-  let resolveRefs optInherit (OpenApi.Inline xS) (OpenApi.Inline bS) =
-        OpenApi.Inline <$> merge optInherit xS bS
+  let resolveRefs (OpenApi.Inline xS) (OpenApi.Inline bS) =
+        OpenApi.Inline <$> merge xS bS
       -- This uses the ref name from the base schema for the resulting merged schema.
       -- Should make a hybrid of them so that there are no unintended overrides
-      resolveRefs optInherit (OpenApi.Ref xRef) (OpenApi.Ref bRef) = do
+      resolveRefs (OpenApi.Ref xRef) (OpenApi.Ref bRef) = do
         let mergedRef = coerce (coerce bRef <> "+" <> coerce xRef :: Text)
         gets (IOHM.lookup $ coerce mergedRef) >>= \case
           Just _ -> pure (OpenApi.Ref mergedRef) -- ref already processed
@@ -129,52 +129,43 @@ extendOpenApi extRefs extSchema baseRefs baseSchema =
                 mBS = IOHM.lookup (coerce bRef) baseRefs
             case (mXS, mBS) of
               (Just xS, Just bS) -> do
-                merged <- merge optInherit xS bS
+                merged <- merge xS bS
                 modify (IOHM.insert (coerce mergedRef) merged)
                 pure $ OpenApi.Ref mergedRef
               _ -> pure $ OpenApi.Ref bRef -- shouldn't happen
-      resolveRefs optInherit (OpenApi.Ref xRef) (OpenApi.Inline bS) =
+      resolveRefs (OpenApi.Ref xRef) (OpenApi.Inline bS) =
         case IOHM.lookup (coerce xRef) extRefs of
           Nothing -> pure (OpenApi.Inline bS) -- shouldn't happen
-          Just xS -> OpenApi.Inline <$> merge optInherit xS bS
-      resolveRefs optInherit (OpenApi.Inline xS) (OpenApi.Ref bRef) =
+          Just xS -> OpenApi.Inline <$> merge xS bS
+      resolveRefs (OpenApi.Inline xS) (OpenApi.Ref bRef) =
         case IOHM.lookup (coerce bRef) baseRefs of
           Nothing -> pure (OpenApi.Ref bRef) -- shouldn't happen
-          Just bS -> OpenApi.Inline <$> merge optInherit xS bS
+          Just bS -> OpenApi.Inline <$> merge xS bS
 
       merge
-        :: OptionalityInherit
-        -> OpenApi.Schema
+        :: OpenApi.Schema
         -> OpenApi.Schema
         -> State (OpenApi.Definitions OpenApi.Schema) OpenApi.Schema
-      merge optInherit xS bS = do
+      merge xS bS = do
         -- There's some hoop jumping due to the annoying monomorphic types of
         -- the compat wrapper. Thankfully they did not make 'mapWithKey' monomorphic.
         let xSProps = OpenApi._schemaProperties xS
             xSReqFields = Set.fromList $ OpenApi._schemaRequired xS
             bSProps = OpenApi._schemaProperties bS
             bSReqFields = Set.fromList $ OpenApi._schemaRequired bS
-            determineOptInherit key = case optInherit of
-              NoOpt
-                | xIsOpt && not bIsOpt -> OptExt
-                | bIsOpt && not xIsOpt -> OptBase
-              other -> other
-              where
-                xIsOpt = Set.notMember key xSReqFields
-                bIsOpt = Set.notMember key bSReqFields
 
 #if MIN_VERSION_openapi3(3,2,5)
             xSPropsA = IOHM.mapWithKey (\_ v -> pure v) xSProps
             bSPropsA = IOHM.mapWithKey (\_ v -> pure v) bSProps
-            mergedPropsA = IOHM.intersectionWithKey
-                      (\k ma mb -> ma >>= \a -> mb >>= \b ->
-                        resolveRefs (determineOptInherit k) a b
+            mergedPropsA = IOHM.intersectionWith
+                      (\ma mb -> ma >>= \a -> mb >>= \b ->
+                        resolveRefs a b
                       )
                       xSPropsA
                       bSPropsA
 #else
-            mergedPropsA = IOHM.intersectionWithKey
-                      (resolveRefs . determineOptInherit)
+            mergedPropsA = IOHM.intersectionWith
+                      resolveRefs
                       xSProps
                       bSProps
 #endif
@@ -183,9 +174,9 @@ extendOpenApi extRefs extSchema baseRefs baseSchema =
             mBSItems = OpenApi._schemaItems bS
         mMergedItems <- case (mXSItems, mBSItems) of
           (Just (OpenApi.OpenApiItemsObject xIS), Just (OpenApi.OpenApiItemsObject bIS))
-            -> Just . OpenApi.OpenApiItemsObject <$> resolveRefs optInherit xIS bIS
+            -> Just . OpenApi.OpenApiItemsObject <$> resolveRefs xIS bIS
           (Just (OpenApi.OpenApiItemsArray xIS), Just (OpenApi.OpenApiItemsArray bIS))
-            -> Just . OpenApi.OpenApiItemsArray <$> zipWithM (resolveRefs optInherit) xIS bIS
+            -> Just . OpenApi.OpenApiItemsArray <$> zipWithM resolveRefs xIS bIS
           _ -> pure mXSItems
         mMergedOneOf :: Maybe (Map.Map Text Text, [OpenApi.Referenced OpenApi.Schema]) <-
           fmap (<|> ((mempty,) <$> OpenApi._schemaOneOf xS))
@@ -200,7 +191,7 @@ extendOpenApi extRefs extSchema baseRefs baseSchema =
                   | Just key <- Map.lookup xRef xMapSwap
                   , Just bRef <- IOHM.lookup key bMap
                   -> do
-                    OpenApi.Ref newRef <- lift $ resolveRefs optInherit
+                    OpenApi.Ref newRef <- lift $ resolveRefs
                       (OpenApi.Ref (OpenApi.Reference xRef))
                       (OpenApi.Ref (OpenApi.Reference bRef))
                     pure (Map.singleton xRef (coerce newRef), OpenApi.Ref newRef)
@@ -208,17 +199,7 @@ extendOpenApi extRefs extSchema baseRefs baseSchema =
         pure xS
           { OpenApi._schemaProperties = mergedProps <> xSProps <> bSProps
           , OpenApi._schemaRequired =
-              -- If the extension schema is for an optional field And the base
-              -- schema field is not optional, Then all extension fields in the
-              -- schema should be optional Additionally, all child fields for
-              -- the exension should inherit this optionality
-              --
-              -- Similarly, if the base field is optional but the extension
-              -- field is not, then all base fields and descendents should be optional
-              Set.toList $ case optInherit of
-                NoOpt -> xSReqFields <> bSReqFields
-                OptExt -> bSReqFields
-                OptBase -> xSReqFields
+              Set.toList $ xSReqFields <> bSReqFields
           , OpenApi._schemaExample =
               mergeAesonValues
                 <$> OpenApi._schemaExample xS
@@ -237,7 +218,7 @@ extendOpenApi extRefs extSchema baseRefs baseSchema =
           }
 
       (mergedSchema, mergedRefs) =
-        runState (merge NoOpt extSchema baseSchema) mempty
+        runState (merge extSchema baseSchema) mempty
       -- Get all the schema references from the merged result so that schemas
       -- that are no longer references can be dropped from the reference map.
       remainingRefs =
@@ -250,8 +231,3 @@ extendOpenApi extRefs extSchema baseRefs baseSchema =
         <> IOHM.filterWithKey (\k _ -> Set.member k remainingRefs) extRefs
         <> IOHM.filterWithKey (\k _ -> Set.member k remainingRefs) baseRefs
      )
-
-data OptionalityInherit
-  = OptExt
-  | OptBase
-  | NoOpt

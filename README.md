@@ -60,3 +60,10 @@ The contract for the resulting JSON object will have this shape:
     "baz": "text"
 }
 ```
+
+### Limitations
+
+- Extension fields corresponding to base fields should have the same
+  optionality and nullability as the base field. If they don't then the resulting
+  OpenApi schema will not accurately represent all possible values.
+- OpenApi schema properties `oneOf`, `allOf`, `anyOf`, `not` are not yet supported.
