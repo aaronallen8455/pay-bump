@@ -93,31 +93,33 @@ extendDeclareNamedSchemas
 extendDeclareNamedSchemas mName declareExt declareBase = do
   let (extRefs, namedExtSchema) = OpenApi.runDeclare declareExt mempty
       (baseRefs, baseSchema) = OpenApi.runDeclare declareBase mempty
+      mDefaultName = do
+        baseName <- OpenApi._namedSchemaName baseSchema
+        extName <- OpenApi._namedSchemaName namedExtSchema
+        Just $ baseName <> "+" <> extName
       (mergedSchema, mergedRefs) =
         extendOpenApi
+          mName
           extRefs
           (OpenApi._namedSchemaSchema namedExtSchema)
           baseRefs
           (OpenApi._namedSchemaSchema baseSchema)
   OpenApi.declare mergedRefs
-  let mDefaultName = do
-        baseName <- OpenApi._namedSchemaName baseSchema
-        extName <- OpenApi._namedSchemaName namedExtSchema
-        Just $ baseName <> "+" <> extName
   pure namedExtSchema
     { OpenApi._namedSchemaSchema = mergedSchema
     , OpenApi._namedSchemaName = mName <|> mDefaultName
     }
 
 extendOpenApi
-  :: OpenApi.Definitions OpenApi.Schema
+  :: Maybe Text
+  -> OpenApi.Definitions OpenApi.Schema
   -> OpenApi.Schema
   -> OpenApi.Definitions OpenApi.Schema
   -> OpenApi.Schema
   -> (OpenApi.Schema, OpenApi.Definitions OpenApi.Schema)
-extendOpenApi extRefs extSchema baseRefs baseSchema =
+extendOpenApi mSchemaName extRefs extSchema baseRefs baseSchema =
   let resolveRefs (OpenApi.Inline xS) (OpenApi.Inline bS) =
-        OpenApi.Inline <$> merge xS bS
+        OpenApi.Inline <$> merge Nothing xS bS
       -- This uses the ref name from the base schema for the resulting merged schema.
       -- Should make a hybrid of them so that there are no unintended overrides
       resolveRefs (OpenApi.Ref xRef) (OpenApi.Ref bRef) = do
@@ -129,24 +131,25 @@ extendOpenApi extRefs extSchema baseRefs baseSchema =
                 mBS = IOHM.lookup (coerce bRef) baseRefs
             case (mXS, mBS) of
               (Just xS, Just bS) -> do
-                merged <- merge xS bS
+                merged <- merge Nothing xS bS
                 modify (IOHM.insert (coerce mergedRef) merged)
                 pure $ OpenApi.Ref mergedRef
               _ -> pure $ OpenApi.Ref bRef -- shouldn't happen
       resolveRefs (OpenApi.Ref xRef) (OpenApi.Inline bS) =
         case IOHM.lookup (coerce xRef) extRefs of
           Nothing -> pure (OpenApi.Inline bS) -- shouldn't happen
-          Just xS -> OpenApi.Inline <$> merge xS bS
+          Just xS -> OpenApi.Inline <$> merge Nothing xS bS
       resolveRefs (OpenApi.Inline xS) (OpenApi.Ref bRef) =
         case IOHM.lookup (coerce bRef) baseRefs of
           Nothing -> pure (OpenApi.Ref bRef) -- shouldn't happen
-          Just bS -> OpenApi.Inline <$> merge xS bS
+          Just bS -> OpenApi.Inline <$> merge Nothing xS bS
 
       merge
-        :: OpenApi.Schema
+        :: Maybe Text
+        -> OpenApi.Schema
         -> OpenApi.Schema
         -> State (OpenApi.Definitions OpenApi.Schema) OpenApi.Schema
-      merge xS bS = do
+      merge mTitle xS bS = do
         -- There's some hoop jumping due to the annoying monomorphic types of
         -- the compat wrapper. Thankfully they did not make 'mapWithKey' monomorphic.
         let xSProps = OpenApi._schemaProperties xS
@@ -196,6 +199,10 @@ extendOpenApi extRefs extSchema baseRefs baseSchema =
                       (OpenApi.Ref (OpenApi.Reference bRef))
                     pure (Map.singleton xRef (coerce newRef), OpenApi.Ref newRef)
                 x -> pure (mempty, x)
+        let mCombinedTitle = do
+              xTitle <- OpenApi._schemaTitle xS
+              bTitle <- OpenApi._schemaTitle bS
+              pure $ bTitle <> "+" <> xTitle
         pure xS
           { OpenApi._schemaProperties = mergedProps <> xSProps <> bSProps
           , OpenApi._schemaRequired =
@@ -206,7 +213,7 @@ extendOpenApi extRefs extSchema baseRefs baseSchema =
                 <*> OpenApi._schemaExample bS
           , OpenApi._schemaItems = mMergedItems
           , OpenApi._schemaDescription = OpenApi._schemaDescription xS <|> OpenApi._schemaDescription bS
-          , OpenApi._schemaTitle = OpenApi._schemaTitle xS <|> OpenApi._schemaTitle bS
+          , OpenApi._schemaTitle = mTitle <|> mCombinedTitle <|> OpenApi._schemaTitle xS <|> OpenApi._schemaTitle bS
           , OpenApi._schemaXml = OpenApi._schemaXml xS <|> OpenApi._schemaXml bS
           , OpenApi._schemaExternalDocs = OpenApi._schemaExternalDocs xS <|> OpenApi._schemaExternalDocs bS
           , OpenApi._schemaDiscriminator = do
@@ -218,7 +225,7 @@ extendOpenApi extRefs extSchema baseRefs baseSchema =
           }
 
       (mergedSchema, mergedRefs) =
-        runState (merge extSchema baseSchema) mempty
+        runState (merge mSchemaName extSchema baseSchema) mempty
       -- Get all the schema references from the merged result so that schemas
       -- that are no longer references can be dropped from the reference map.
       remainingRefs =
