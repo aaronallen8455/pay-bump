@@ -10,7 +10,6 @@ module Payload.Extend
   , zipExtended
   , mergeAesonValues
   , extendDeclareNamedSchemas
-  , OptionalExt(..)
   ) where
 
 import           Control.Applicative
@@ -256,74 +255,3 @@ data OptionalityInherit
   = OptExt
   | OptBase
   | NoOpt
-
--- | A wrapper used for extension objects that are optional. From the API
--- contract perspective,
---
--- @
--- a `ExtendWith` OptionalExt Nothing == a
--- @
---
--- This allows you to have a response that contains the union of a set of
--- extensions, each corresponding to constructors of a sum type.
--- Using this type for a request body is not supported.
---
--- @
--- data Sum = A ObjA | B ObjB | C ObjC
--- data Base = Base {...}
--- data ObjAExt = ObjAExt {...}
--- data ObjBExt = ObjBExt {...}
--- data ObjCExt = ObjCExt {...}
---
--- type ResponseForA = Base `ExtendWith` ObjAExt
--- type ResponseUnion = Base
---   `ExtendWith` OptionalExt ObjAExt
---   `ExtendWith` OptionalExt ObjBExt
---   `ExtendWith` OptionalExt ObjCExt
--- @
-newtype OptionalExt a = OptionalExt { unOptionalObj :: Maybe a }
-  deriving stock Generic
-  deriving newtype
-    (Functor, Applicative, Monad, Eq, Ord, Show, Read, NFData, Alternative, Semigroup, Monoid)
-
-instance Aeson.ToJSON a => Aeson.ToJSON (OptionalExt a) where
-  toJSON (OptionalExt a) =
-    case Aeson.toJSON a of
-      Aeson.Null -> Aeson.object []
-      o -> o
-
--- It's unclear how best to handle this. For now the type is encode only.
--- instance (Aeson.FromJSON a, OpenApi.ToSchema a) => Aeson.FromJSON (OptionalExt a) where
---   parseJSON v =
-    --
-    -- This implementation checks that the JSON value has the expected shape
-    -- before committing to parsing the object. If not, then any parse failures
-    -- are discarded.
-    -- let (defs, schema) =
-    --       OpenApi.runDeclare (OpenApi.declareSchema (Proxy @a)) mempty
-    --     validationResult =
-    --       OpenApi.validateJSON
-    --         defs
-    --         (schema & everywhere additionalProperties ?~ OpenApi.AdditionalPropertiesAllowed True)
-    --         v
-    -- in case validationResult of
-    --   [] -> OptionalExt <$> Aeson.parseJSON v
-    --   errs -> traceShow errs pure (OptionalExt Nothing)
-
-    -- OptionalExt <$> (Aeson.parseJSON v <|> pure Nothing)
-
-    -- let schema = OpenApi.undeclare (OpenApi.declareSchema (Proxy @(OptionalExt a)))
-    --     topFields = IOHM.keys $ OpenApi._schemaProperties schema
-    -- in case v of
-    --     Aeson.Object o
-    --       | all (\k -> not $ KeyMap.member (Key.fromText k) o) topFields ->
-    --           pure $ OptionalExt Nothing
-    --     _ -> OptionalExt <$> Aeson.parseJSON v
-
-instance OpenApi.ToSchema a => OpenApi.ToSchema (OptionalExt a) where
-  declareNamedSchema _ =
-    (\ns -> ns
-      {OpenApi._namedSchemaSchema = (OpenApi._namedSchemaSchema ns)
-        { OpenApi._schemaRequired = mempty }
-      }
-    ) <$> OpenApi.declareNamedSchema (Proxy @(Maybe a))
