@@ -47,3 +47,6 @@ Consideration of allOf, anyOf, not?
 - Optional extension could be possible by creating clones of referenced schemas
   that have all fields as optional and then replacing references to existing schemas
   with the optional version in the optional extension. Is it really useful though?
+
+- Could have a path parameter than merging an extension at a particular path
+rather than having to merge from the root up.
