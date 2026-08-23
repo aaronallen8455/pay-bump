@@ -91,6 +91,7 @@ extendDeclareNamedSchemas
   -> OpenApi.Declare (OpenApi.Definitions OpenApi.Schema) OpenApi.NamedSchema
   -> OpenApi.Declare (OpenApi.Definitions OpenApi.Schema) OpenApi.NamedSchema
 extendDeclareNamedSchemas mName declareExt declareBase = do
+  ambientRefs <- OpenApi.look
   let (extRefs, namedExtSchema) = OpenApi.runDeclare declareExt mempty
       (baseRefs, baseSchema) = OpenApi.runDeclare declareBase mempty
       mDefaultName = do
@@ -99,6 +100,7 @@ extendDeclareNamedSchemas mName declareExt declareBase = do
         Just $ baseName <> "+" <> extName
       (mergedSchema, mergedRefs) =
         extendOpenApi
+          ambientRefs
           mName
           extRefs
           (OpenApi._namedSchemaSchema namedExtSchema)
@@ -110,16 +112,19 @@ extendDeclareNamedSchemas mName declareExt declareBase = do
     , OpenApi._namedSchemaName = mName <|> mDefaultName
     }
 
+-- Should this be done in the Declare monad so that support for lookups isn't implemented manually?
+-- Only downside is the pathological case where the two schemas has declaration that clash.
 extendOpenApi
-  :: Maybe Text
+  :: OpenApi.Definitions OpenApi.Schema
+  -> Maybe Text
   -> OpenApi.Definitions OpenApi.Schema
   -> OpenApi.Schema
   -> OpenApi.Definitions OpenApi.Schema
   -> OpenApi.Schema
   -> (OpenApi.Schema, OpenApi.Definitions OpenApi.Schema)
-extendOpenApi mSchemaName extRefs extSchema baseRefs baseSchema =
+extendOpenApi ambientRefs mSchemaName extRefs extSchema baseRefs baseSchema =
   let (mergedSchema, mergedRefs) =
-        runState (mergeSchemas mSchemaName extRefs baseRefs extSchema baseSchema) mempty
+        runState (mergeSchemas ambientRefs mSchemaName extRefs baseRefs extSchema baseSchema) mempty
       -- Get all the schema references from the merged result so that schemas
       -- that are no longer references can be dropped from the reference map.
       remainingRefs =
@@ -136,41 +141,43 @@ extendOpenApi mSchemaName extRefs extSchema baseRefs baseSchema =
 resolveRefs
   :: OpenApi.Definitions OpenApi.Schema
   -> OpenApi.Definitions OpenApi.Schema
+  -> OpenApi.Definitions OpenApi.Schema
   -> OpenApi.Referenced OpenApi.Schema
   -> OpenApi.Referenced OpenApi.Schema
   -> State (OpenApi.Definitions OpenApi.Schema) (OpenApi.Referenced OpenApi.Schema)
-resolveRefs extRefs baseRefs (OpenApi.Inline xS) (OpenApi.Inline bS) =
-  OpenApi.Inline <$> mergeSchemas Nothing extRefs baseRefs xS bS
-resolveRefs extRefs baseRefs (OpenApi.Ref xRef) (OpenApi.Ref bRef) = do
+resolveRefs ambientRefs extRefs baseRefs (OpenApi.Inline xS) (OpenApi.Inline bS) =
+  OpenApi.Inline <$> mergeSchemas ambientRefs Nothing extRefs baseRefs xS bS
+resolveRefs ambientRefs extRefs baseRefs (OpenApi.Ref xRef) (OpenApi.Ref bRef) = do
   let mergedRef = coerce (coerce bRef <> "+" <> coerce xRef :: Text)
   gets (IOHM.lookup $ coerce mergedRef) >>= \case
     Just _ -> pure (OpenApi.Ref mergedRef) -- ref already processed
     Nothing -> do
-      let mXS = IOHM.lookup (coerce xRef) extRefs
-          mBS = IOHM.lookup (coerce bRef) baseRefs
+      let mXS = IOHM.lookup (coerce xRef) extRefs <|> IOHM.lookup (coerce xRef) ambientRefs
+          mBS = IOHM.lookup (coerce bRef) baseRefs <|> IOHM.lookup (coerce bRef) ambientRefs
       case (mXS, mBS) of
         (Just xS, Just bS) -> do
-          merged <- mergeSchemas Nothing extRefs baseRefs xS bS
+          merged <- mergeSchemas ambientRefs Nothing extRefs baseRefs xS bS
           modify (IOHM.insert (coerce mergedRef) merged)
           pure $ OpenApi.Ref mergedRef
         _ -> pure $ OpenApi.Ref bRef -- shouldn't happen
-resolveRefs extRefs baseRefs (OpenApi.Ref xRef) (OpenApi.Inline bS) =
-  case IOHM.lookup (coerce xRef) extRefs of
+resolveRefs ambientRefs extRefs baseRefs (OpenApi.Ref xRef) (OpenApi.Inline bS) =
+  case IOHM.lookup (coerce xRef) extRefs <|> IOHM.lookup (coerce xRef) ambientRefs of
     Nothing -> pure (OpenApi.Inline bS) -- shouldn't happen
-    Just xS -> OpenApi.Inline <$> mergeSchemas Nothing  extRefs baseRefs xS bS
-resolveRefs extRefs baseRefs (OpenApi.Inline xS) (OpenApi.Ref bRef) =
-  case IOHM.lookup (coerce bRef) baseRefs of
+    Just xS -> OpenApi.Inline <$> mergeSchemas ambientRefs Nothing  extRefs baseRefs xS bS
+resolveRefs ambientRefs extRefs baseRefs (OpenApi.Inline xS) (OpenApi.Ref bRef) =
+  case IOHM.lookup (coerce bRef) baseRefs <|> IOHM.lookup (coerce bRef) ambientRefs of
     Nothing -> pure (OpenApi.Ref bRef) -- shouldn't happen
-    Just bS -> OpenApi.Inline <$> mergeSchemas Nothing extRefs baseRefs xS bS
+    Just bS -> OpenApi.Inline <$> mergeSchemas ambientRefs Nothing extRefs baseRefs xS bS
 
 mergeSchemas
-  :: Maybe Text
+  :: OpenApi.Definitions OpenApi.Schema
+  -> Maybe Text
   -> OpenApi.Definitions OpenApi.Schema
   -> OpenApi.Definitions OpenApi.Schema
   -> OpenApi.Schema
   -> OpenApi.Schema
   -> State (OpenApi.Definitions OpenApi.Schema) OpenApi.Schema
-mergeSchemas mTitle extRefs baseRefs xS bS = do
+mergeSchemas ambientRefs mTitle extRefs baseRefs xS bS = do
   let xSProps = OpenApi._schemaProperties xS
       xSReqFields = Set.fromList $ OpenApi._schemaRequired xS
       bSProps = OpenApi._schemaProperties bS
@@ -183,13 +190,13 @@ mergeSchemas mTitle extRefs baseRefs xS bS = do
       bSPropsA = IOHM.mapWithKey (\_ v -> pure v) bSProps
       mergedPropsA = IOHM.intersectionWith
                 (\ma mb -> ma >>= \a -> mb >>= \b ->
-                  resolveRefs extRefs baseRefs a b
+                  resolveRefs ambientRefs extRefs baseRefs a b
                 )
                 xSPropsA
                 bSPropsA
 #else
       mergedPropsA = IOHM.intersectionWith
-                (resolveRefs extRefs baseRefs)
+                (resolveRefs ambientRefs extRefs baseRefs)
                 xSProps
                 bSProps
 #endif
@@ -198,9 +205,9 @@ mergeSchemas mTitle extRefs baseRefs xS bS = do
       mBSItems = OpenApi._schemaItems bS
   mMergedItems <- case (mXSItems, mBSItems) of
     (Just (OpenApi.OpenApiItemsObject xIS), Just (OpenApi.OpenApiItemsObject bIS))
-      -> Just . OpenApi.OpenApiItemsObject <$> resolveRefs extRefs baseRefs xIS bIS
+      -> Just . OpenApi.OpenApiItemsObject <$> resolveRefs ambientRefs extRefs baseRefs xIS bIS
     (Just (OpenApi.OpenApiItemsArray xIS), Just (OpenApi.OpenApiItemsArray bIS))
-      -> Just . OpenApi.OpenApiItemsArray <$> zipWithM (resolveRefs extRefs baseRefs) xIS bIS
+      -> Just . OpenApi.OpenApiItemsArray <$> zipWithM (resolveRefs ambientRefs extRefs baseRefs) xIS bIS
     _ -> pure mXSItems
   -- Only supports the case where a discriminator is used to map to tagged schemas
   -- with tags being shared between base and extension.
@@ -218,7 +225,7 @@ mergeSchemas mTitle extRefs baseRefs xS bS = do
             , Just bRef <- IOHM.lookup key bMap
             -> do
               OpenApi.Ref newRef <- lift $
-                resolveRefs extRefs baseRefs
+                resolveRefs ambientRefs extRefs baseRefs
                   (OpenApi.Ref (OpenApi.Reference xRef))
                   (OpenApi.Ref (OpenApi.Reference bRef))
               pure (Map.singleton xRef (coerce newRef), OpenApi.Ref newRef)
