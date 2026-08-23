@@ -6,10 +6,11 @@
 {-# LANGUAGE DataKinds #-}
 module Payload.Extend
   ( ExtendWith(..)
-  , NamedExtension(..)
+  , NameSchema(..)
   , zipExtended
   , mergeAesonValues
   , extendDeclareNamedSchemas
+  , module AtPath
   ) where
 
 import           Control.Applicative
@@ -17,8 +18,8 @@ import           Control.DeepSeq
 import           Control.Monad
 import           Control.Monad.State
 import           Control.Monad.Trans.Maybe
-import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.Aeson as Aeson
+import qualified Data.Aeson.KeyMap as KeyMap
 import           Data.Bifunctor
 import           Data.Coerce
 import qualified Data.Generics as Syb
@@ -41,6 +42,8 @@ import qualified Data.Vector as V
 import           GHC.Generics
 import           GHC.TypeLits
 
+import           Payload.AtPath as AtPath
+
 -- | The result of joining a base type with some extension. The 'ToJSON', 'FromJSON',
 -- and 'ToSchema' instances present this type as a single object resulting from
 -- merging the JSON objects field-wise.
@@ -54,9 +57,9 @@ instance Bifunctor ExtendWith where
   second = fmap
 
 -- | Allows for specifying a name to be used for the OpenApi schema declaration.
-newtype NamedExtension (name :: Symbol) base ext = NamedExtension (base `ExtendWith` ext)
-  deriving (Show, Read, Eq, Ord)
-  deriving newtype (Aeson.ToJSON, Aeson.FromJSON, Functor, NFData)
+newtype NameSchema (name :: Symbol) a = NameSchema a
+  deriving (Show, Read, Eq, Ord, Functor)
+  deriving newtype (Aeson.ToJSON, Aeson.FromJSON, NFData)
 
 zipExtended :: SA.Zip f => f a `ExtendWith` f b -> f (a `ExtendWith` b)
 zipExtended (fa `ExtendWith` fb) = SA.zipWith ExtendWith fa fb
@@ -79,11 +82,10 @@ instance (OpenApi.ToSchema ext, OpenApi.ToSchema base) => OpenApi.ToSchema (base
       (OpenApi.declareNamedSchema (Proxy @ext))
       (OpenApi.declareNamedSchema (Proxy @base))
 
-instance (OpenApi.ToSchema ext, OpenApi.ToSchema base, KnownSymbol name) => OpenApi.ToSchema (NamedExtension name base ext) where
+instance (OpenApi.ToSchema a, KnownSymbol name) => OpenApi.ToSchema (NameSchema name a) where
   declareNamedSchema _ =
-    extendDeclareNamedSchemas (Just . T.pack $ symbolVal (Proxy @name))
-      (OpenApi.declareNamedSchema (Proxy @ext))
-      (OpenApi.declareNamedSchema (Proxy @base))
+    (\ns -> ns { OpenApi._namedSchemaName = Just . T.pack $ symbolVal (Proxy @name) })
+      <$> OpenApi.declareNamedSchema (Proxy @a)
 
 extendDeclareNamedSchemas
   :: Maybe Text
