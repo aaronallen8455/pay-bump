@@ -20,6 +20,7 @@ library
     import:           warnings
     exposed-modules:  Payload.Extend
                       Payload.AtPath
+                      Payload.NameSchema
     -- other-modules:
     -- other-extensions:
     build-depends:    base,

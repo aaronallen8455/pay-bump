@@ -3,14 +3,13 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE DataKinds #-}
 module Payload.Extend
   ( ExtendWith(..)
-  , NameSchema(..)
   , zipExtended
   , mergeAesonValues
   , extendDeclareNamedSchemas
   , module AtPath
+  , module NameSchema
   ) where
 
 import           Control.Applicative
@@ -35,14 +34,13 @@ import           Data.Proxy
 import qualified Data.Semialign as SA
 import qualified Data.Set as Set
 import           Data.Text (Text)
-import qualified Data.Text as T
 import           Data.Traversable
 import           Data.Tuple
 import qualified Data.Vector as V
 import           GHC.Generics
-import           GHC.TypeLits
 
 import           Payload.AtPath as AtPath
+import           Payload.NameSchema as NameSchema
 
 -- | The result of joining a base type with some extension. The 'ToJSON', 'FromJSON',
 -- and 'ToSchema' instances present this type as a single object resulting from
@@ -55,11 +53,6 @@ infixr 6 `ExtendWith`
 instance Bifunctor ExtendWith where
   first f (a `ExtendWith` ext) = f a `ExtendWith` ext
   second = fmap
-
--- | Allows for specifying a name to be used for the OpenApi schema declaration.
-newtype NameSchema (name :: Symbol) a = NameSchema a
-  deriving (Show, Read, Eq, Ord, Functor)
-  deriving newtype (Aeson.ToJSON, Aeson.FromJSON, NFData)
 
 zipExtended :: SA.Zip f => f a `ExtendWith` f b -> f (a `ExtendWith` b)
 zipExtended (fa `ExtendWith` fb) = SA.zipWith ExtendWith fa fb
@@ -81,11 +74,6 @@ instance (OpenApi.ToSchema ext, OpenApi.ToSchema base) => OpenApi.ToSchema (base
     extendDeclareNamedSchemas Nothing
       (OpenApi.declareNamedSchema (Proxy @ext))
       (OpenApi.declareNamedSchema (Proxy @base))
-
-instance (OpenApi.ToSchema a, KnownSymbol name) => OpenApi.ToSchema (NameSchema name a) where
-  declareNamedSchema _ =
-    (\ns -> ns { OpenApi._namedSchemaName = Just . T.pack $ symbolVal (Proxy @name) })
-      <$> OpenApi.declareNamedSchema (Proxy @a)
 
 extendDeclareNamedSchemas
   :: Maybe Text
