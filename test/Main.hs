@@ -3,6 +3,7 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE DataKinds #-}
 module Main (main) where
 
 import           Control.Monad
@@ -26,16 +27,48 @@ import           Payload.Extend
 main :: IO ()
 main = defaultMain $
   testGroup "pay-bump"
-    [ testCase "ToJSON" $
-        toJSON (b1 `ExtendWith` e1)
-          @?= toJSON c1
-    , testCase "FromJSON" $
-        parseEither (parseJSON @(B1 `ExtendWith` E1)) (toJSON (b1 `ExtendWith` e1))
-          @?= Right (b1 `ExtendWith` e1)
-    , testCase "ToSchema" $
-        eqSchema
-          (toInlinedSchema (Proxy @(B1 `ExtendWith` E1)))
-          (toInlinedSchema (Proxy @C1))
+    [ testGroup "plain"
+      [ testCase "ToJSON" $
+          toJSON (b1 `ExtendWith` e1)
+            @?= toJSON c1
+      , testCase "FromJSON" $
+          parseEither parseJSON (toJSON (b1 `ExtendWith` e1))
+            @?= Right (b1 `ExtendWith` e1)
+      , testCase "ToSchema" $
+          eqSchema
+            (toInlinedSchema (Proxy @(B1 `ExtendWith` E1)))
+            (toInlinedSchema (Proxy @C1))
+      ]
+    , let extended = b1
+            `ExtendWith`
+            AtPath @'[Req "e1f1"] (1 :: Int)
+            `ExtendWith`
+            AtPath @'[Req "b1f3", Req "e2f1"] False
+            `ExtendWith`
+            AtPath @'[Req "b1f3", Arr "b2f1"] [e3_1, e3_2]
+      in testGroup "atPath"
+      [ testCase "ToJSON" $
+          toJSON extended
+            @?= toJSON c1
+      , testCase "FromJSON" $
+          parseEither
+            parseJSON (toJSON c1)
+            @?= Right extended
+      , testCase "ToSchema" $
+          eqSchema
+            (toInlinedSchema
+              (Proxy
+                @(B1 `ExtendWith`
+                  AtPath '[Req "e1f1"] Int
+                  `ExtendWith`
+                  AtPath '[Req "b1f3", Req "e2f1"] Bool
+                  `ExtendWith`
+                  AtPath '[Req "b1f3", Arr "b2f1"] [E3]
+                 )
+              )
+            )
+            (toInlinedSchema (Proxy @C1))
+      ]
     ]
 
 data B1 = B1
