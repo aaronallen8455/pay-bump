@@ -41,11 +41,11 @@ main = defaultMain $
       ]
     , let extended = b1
             `ExtendWith`
-            AtPath @'[Req "e1f1"] (1 :: Int)
+            AtPath @_ @'[Req "e1f1"] (1 :: Int)
             `ExtendWith`
-            AtPath @'[Req "b1f3", Req "e2f1"] False
+            AtPath @_ @'[Req "b1f3", Req "e2f1"] False
             `ExtendWith`
-            AtPath @'[Req "b1f3", Arr "b2f1"] [e3_1, e3_2]
+            AtPath @_ @'[Req "b1f3", Arr "b2f1"] [e3_1, e3_2]
       in testGroup "atPath"
       [ testCase "ToJSON" $
           toJSON extended
@@ -59,11 +59,11 @@ main = defaultMain $
             (toInlinedSchema
               (Proxy
                 @(B1 `ExtendWith`
-                  AtPath '[Req "e1f1"] Int
+                  Int `AtPath` '[Req "e1f1"]
                   `ExtendWith`
-                  AtPath '[Req "b1f3", Req "e2f1"] Bool
+                  Bool `AtPath` '[Req "b1f3", Req "e2f1"]
                   `ExtendWith`
-                  AtPath '[Req "b1f3", Arr "b2f1"] [E3]
+                  [E3] `AtPath` '[Req "b1f3", Arr "b2f1"]
                  )
               )
             )
