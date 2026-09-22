@@ -25,12 +25,13 @@ import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.Aeson.Types as Aeson
 import           Data.Coerce
+import qualified Data.Generics as Syb
 #if MIN_VERSION_openapi3(3,2,5)
 import qualified Data.HashMap.Strict.InsOrd.Compat as IOHM
 #else
 import qualified Data.HashMap.Strict.InsOrd as IOHM
 #endif
-import qualified Data.Generics as Syb
+import           Data.Kind
 import qualified Data.List as List
 import qualified Data.OpenApi as OpenApi
 import           Data.Proxy
@@ -40,7 +41,8 @@ import           GHC.TypeLits
 type Path = [PathField]
 
 type data Optionality
-  = Optional
+  = Optional -- | Optional field that also allows null
+  | Nullable
   | Required
 
 type data Container
@@ -63,42 +65,22 @@ newtype AtPath a (path :: Path) = AtPath a
   deriving (Show, Read, Eq, Ord)
   deriving newtype (NFData)
 
--- Dispatch wrappers used to explicitly guide instance resolution
-newtype OptionalField a = OptionalField a
-newtype NullableField a = NullableField a
-newtype RegularField a = RegularField a
-newtype ArrayField a = ArrayField a
+newtype Validated a = Validated a
 
--- Guarding the coercible constraint behind the Wrap and Unwrap classes allows
--- for keeping the dispatch wrappers internal.
-class Wrap r where
-  wrap :: a -> r a
-  default wrap :: Coercible a (r a) => a -> r a
-  wrap = coerce
-instance Wrap OptionalField
-instance Wrap NullableField
-instance Wrap RegularField
-instance Wrap ArrayField
+type Validate :: Type -> Constraint
+type family Validate atPath where
+  Validate (AtPath (Maybe a) (Field Optional c sym ': p)) = ()
 
-class Unwrap r where
-  unwrap :: r a -> a
-  default unwrap :: Coercible a (r a) => r a -> a
-  unwrap = coerce
-instance Unwrap OptionalField
-instance Unwrap NullableField
-instance Unwrap RegularField
-instance Unwrap ArrayField
+  Validate (AtPath (Maybe a) (Field Nullable c sym ': p)) = ()
 
-type family Dispatch atPath where
-  Dispatch (AtPath (Maybe a) (Field Optional c sym ': p))
-    = OptionalField (AtPath (Maybe a) (Field Optional c sym ': p))
-  Dispatch (AtPath (Maybe a) fp)
-    = NullableField (AtPath (Maybe a) fp)
-  Dispatch (AtPath (f a) (Field Required Array sym ': p))
-    = ArrayField (AtPath (f a) (Field Required Array sym ': p))
-  Dispatch (AtPath a (Field Required NonArray sym ': p))
-    = RegularField (AtPath a (Field Required NonArray sym ': p))
-  Dispatch (AtPath a (Field opt c sym ': p))
+  Validate (AtPath (Maybe a) p)
+    = TypeError (Text "Maybe values using AtPath must be declared as Optional or Nullable")
+
+  Validate (AtPath (f a) (Field Required Array sym ': p)) = ()
+
+  Validate (AtPath a (Field Required NonArray sym ': p)) = ()
+
+  Validate (AtPath a (Field opt c sym ': p))
     = TypeError (Text "Invalid JSON path component at key '" :<>: Text sym :<>: Text "'")
 
 --------------------------------------------------------------------------------
@@ -109,15 +91,14 @@ instance Aeson.ToJSON a => Aeson.ToJSON (AtPath a '[]) where
   toJSON = Aeson.toJSON @a . coerce
 
 instance
-  ( d (AtPath a (p ': ps)) ~ Dispatch (AtPath a (p ': ps))
-  , Wrap d
-  , Aeson.ToJSON (d (AtPath a (p ': ps)))
+  ( Validate (AtPath a (p ': ps))
+  , Aeson.ToJSON (Validated (AtPath a (p ': ps)))
   )
   => Aeson.ToJSON (AtPath a (p ': ps)) where
-  toJSON = Aeson.toJSON . wrap @d
+  toJSON = Aeson.toJSON . Validated
 
 instance Aeson.ToJSON (AtPath a (Field Required c sym ': p))
-  => Aeson.ToJSON (OptionalField (AtPath (Maybe a) (Field Optional c sym ': p))) where
+  => Aeson.ToJSON (Validated (AtPath (Maybe a) (Field Optional c sym ': p))) where
   toJSON
     = maybe
         (Aeson.object [])
@@ -127,7 +108,7 @@ instance Aeson.ToJSON (AtPath a (Field Required c sym ': p))
 instance
   ( Aeson.ToJSON (AtPath a (Field Required c sym ': p))
   , KnownSymbol sym
-  ) => Aeson.ToJSON (NullableField (AtPath (Maybe a) (Field Required c sym ': p))) where
+  ) => Aeson.ToJSON (Validated (AtPath (Maybe a) (Field Nullable c sym ': p))) where
   toJSON
     = maybe
         (Aeson.object [Key.fromString (symbolVal (Proxy @sym)) Aeson..= Aeson.Null])
@@ -140,7 +121,7 @@ instance
   , Functor f
   , Aeson.ToJSON (f Aeson.Value)
   , Coercible (f a) (f (AtPath a p))
-  ) => Aeson.ToJSON (ArrayField (AtPath (f a) (Field Required Array sym ': p))) where
+  ) => Aeson.ToJSON (Validated (AtPath (f a) (Field Required Array sym ': p))) where
   toJSON x =
     Aeson.object
       [ Key.fromString (symbolVal (Proxy @sym))
@@ -150,7 +131,7 @@ instance
 instance
   ( Aeson.ToJSON (AtPath a p)
   , KnownSymbol sym
-  ) => Aeson.ToJSON (RegularField (AtPath a (Field Required NonArray sym ': p))) where
+  ) => Aeson.ToJSON (Validated (AtPath a (Field Required NonArray sym ': p))) where
   toJSON x =
     Aeson.object
       [ Key.fromString (symbolVal (Proxy @sym))
@@ -165,17 +146,16 @@ instance Aeson.FromJSON a => Aeson.FromJSON (AtPath a '[]) where
   parseJSON = coerce . Aeson.parseJSON @a
 
 instance
-  ( d (AtPath a (p ': ps)) ~ Dispatch (AtPath a (p ': ps))
-  , Unwrap d
-  , Aeson.FromJSON (d (AtPath a (p ': ps)))
+  ( Validate (AtPath a (p ': ps))
+  , Aeson.FromJSON (Validated (AtPath a (p ': ps)))
   )
   => Aeson.FromJSON (AtPath a (p ': ps)) where
-  parseJSON = fmap (unwrap @d) . Aeson.parseJSON
+  parseJSON = fmap (coerce @(Validated (AtPath a (p ': ps)))) . Aeson.parseJSON
 
 instance
   ( Aeson.FromJSON (AtPath a (Field Required c sym ': p))
   , KnownSymbol sym
-  ) => Aeson.FromJSON (OptionalField (AtPath (Maybe a) (Field Optional c sym ': p))) where
+  ) => Aeson.FromJSON (Validated (AtPath (Maybe a) (Field Optional c sym ': p))) where
   parseJSON
     = Aeson.withObject "AtPath" $ \obj ->
       case KeyMap.lookup (Key.fromString (symbolVal (Proxy @sym))) obj of
@@ -184,11 +164,10 @@ instance
         Just _ -> coerce . Just
           <$> Aeson.parseJSON @(AtPath a (Field Required c sym ': p)) (Aeson.Object obj)
 
--- Handle nullability
 instance
   ( Aeson.FromJSON (AtPath a (Field Required c sym ': p))
   , KnownSymbol sym
-  ) => Aeson.FromJSON (NullableField (AtPath (Maybe a) (Field Required c sym ': p))) where
+  ) => Aeson.FromJSON (Validated (AtPath (Maybe a) (Field Nullable c sym ': p))) where
   parseJSON
     = Aeson.withObject "AtPath" $ \obj -> do
         x <- obj Aeson..: Key.fromString (symbolVal (Proxy @sym))
@@ -204,7 +183,7 @@ instance
   , KnownSymbol sym
   , Aeson.FromJSON (f (AtPath a p))
   , Coercible (f a) (f (AtPath a p))
-  ) => Aeson.FromJSON (ArrayField (AtPath (f a) (Field Required Array sym ': p))) where
+  ) => Aeson.FromJSON (Validated (AtPath (f a) (Field Required Array sym ': p))) where
   parseJSON = Aeson.withObject "AtPath" $ \obj ->
     coerce $
       Aeson.parseField @(f (AtPath a p))
@@ -213,7 +192,7 @@ instance
 
 instance
   (Aeson.FromJSON (AtPath a p), KnownSymbol sym)
-  => Aeson.FromJSON (RegularField (AtPath a (Field Required NonArray sym ': p))) where
+  => Aeson.FromJSON (Validated (AtPath a (Field Required NonArray sym ': p))) where
   parseJSON = Aeson.withObject "AtPath" $ \obj ->
     coerce @(Aeson.Parser (AtPath a p))
       $ obj Aeson..: Key.fromString (symbolVal (Proxy @sym))
@@ -226,18 +205,18 @@ instance OpenApi.ToSchema a => OpenApi.ToSchema (AtPath a '[]) where
   declareNamedSchema _ = OpenApi.declareNamedSchema (Proxy @a)
 
 instance
-  ( d ~ Dispatch (AtPath a (p ': ps))
+  ( Validate (AtPath a (p ': ps))
   , Syb.Typeable a , Syb.Typeable ps , Syb.Typeable p
-  , OpenApi.ToSchema d
+  , OpenApi.ToSchema (Validated (AtPath a (p ': ps)))
   )
   => OpenApi.ToSchema (AtPath a (p ': ps)) where
-  declareNamedSchema _ = OpenApi.declareNamedSchema (Proxy @d)
+  declareNamedSchema _ = OpenApi.declareNamedSchema (Proxy @(Validated (AtPath a (p ': ps))))
 
 instance
   ( KnownSymbol sym
   , Syb.Typeable a, Syb.Typeable p, Syb.Typeable c
   , OpenApi.ToSchema (AtPath a (Field Required c sym ': p))
-  ) => OpenApi.ToSchema (OptionalField (AtPath (Maybe a) (Field Optional c sym ': p))) where
+  ) => OpenApi.ToSchema (Validated (AtPath (Maybe a) (Field Optional c sym ': p))) where
   declareNamedSchema _ = do
     ns <- OpenApi.declareNamedSchema (Proxy @(AtPath a (Field Required c sym ': p)))
     let key = T.pack $ symbolVal (Proxy @sym)
@@ -262,7 +241,7 @@ instance
   , Syb.Typeable a, Syb.Typeable p, Syb.Typeable c
   , OpenApi.ToSchema (AtPath a (Field Required c sym ': p))
   )
-  => OpenApi.ToSchema (NullableField (AtPath (Maybe a) (Field Required c sym ': p))) where
+  => OpenApi.ToSchema (Validated (AtPath (Maybe a) (Field Nullable c sym ': p))) where
   declareNamedSchema _ = do
     ns <- OpenApi.declareNamedSchema (Proxy @(AtPath a (Field Required c sym ': p)))
     let key = T.pack $ symbolVal (Proxy @sym)
@@ -284,7 +263,7 @@ instance
   ( OpenApi.ToSchema (AtPath a p)
   , KnownSymbol sym
   , Syb.Typeable a, Syb.Typeable p
-  ) => OpenApi.ToSchema (ArrayField (AtPath [a] (Field Required Array sym ': p))) where
+  ) => OpenApi.ToSchema (Validated (AtPath [a] (Field Required Array sym ': p))) where
   declareNamedSchema _ = do
     ns <- OpenApi.declareNamedSchema (Proxy @(AtPath a p))
     let key = T.pack $ symbolVal (Proxy @sym)
@@ -311,7 +290,7 @@ instance
   ( OpenApi.ToSchema (AtPath a p)
   , KnownSymbol sym
   , Syb.Typeable a, Syb.Typeable p
-  ) => OpenApi.ToSchema (RegularField (AtPath a (Field Required NonArray sym ': p))) where
+  ) => OpenApi.ToSchema (Validated (AtPath a (Field Required NonArray sym ': p))) where
   declareNamedSchema _ = do
     ns <- OpenApi.declareNamedSchema (Proxy @(AtPath a p))
     let key = T.pack $ symbolVal (Proxy @sym)
