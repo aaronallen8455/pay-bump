@@ -1,3 +1,5 @@
+remove syb traversal
+
 Sound semantics for oneOf:
  ❯ Is there a correct way to merge the oneOf properties of the two schemas if there is no discriminator, i.e. no way to correlate between base and extension? Merging them pairwise seems too arbitrary.
                                                                                                                                                                                                                               
