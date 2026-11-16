@@ -17,6 +17,7 @@ module Payload.AtPath
   , Opt
   , Arr
   , OptArr
+  , AtPathFieldType
   ) where
 
 import           Control.DeepSeq
@@ -314,23 +315,31 @@ instance
 -- HasField instance
 --------------------------------------------------------------------------------
 
-instance HasField sym (AtPath a '[Field o c sym]) a where
-  getField (AtPath a) = a
-instance HasField sym (AtPath a (Field Required NonArray sym ': p1 ': p2)) (AtPath a (p1 ': p2)) where
-  getField = coerce
+type AtPathFieldType :: Symbol -> Type -> Maybe Type
+type family AtPathFieldType sym a where
+  AtPathFieldType sym (AtPath a '[Field o c sym])
+    = Just a
+  AtPathFieldType sym (AtPath a (Field Required NonArray sym ': p1 ': p2))
+    = Just (AtPath a (p1 ': p2))
+  AtPathFieldType sym (AtPath (f a) (Field Required Array sym ': p1 ': p2))
+    = Just (f (AtPath a (p1 ': p2)))
+  AtPathFieldType sym (AtPath (Maybe a) (Field Optional NonArray sym ': p1 ': p2))
+    = Just (Maybe (AtPath a (p1 ': p2)))
+  AtPathFieldType sym (AtPath (Maybe a) (Field Nullable NonArray sym ': p1 ': p2))
+    = Just (Maybe (AtPath a (p1 ': p2)))
+  AtPathFieldType sym (AtPath (Maybe (f a)) (Field Optional Array sym ': p1 ': p2))
+    = Just (Maybe (f (AtPath a (p1 ': p2))))
+  AtPathFieldType sym (AtPath (Maybe (f a)) (Field Nullable Array sym ': p1 ': p2))
+    = Just (Maybe (f (AtPath a (p1 ': p2))))
+  AtPathFieldType sym other = Nothing
+
+type ThrowIfNothing :: Symbol -> Maybe k -> k
+type family ThrowIfNothing sym a where
+  ThrowIfNothing sym Nothing = TypeError ((Text "Field not found: ") :<>: Text sym)
+  ThrowIfNothing sym (Just a) = a
+
 instance
-  Coercible (f a) (f (AtPath a (p1 ': p2)))
-    => HasField sym (AtPath (f a) (Field Required Array sym ': p1 ': p2)) (f (AtPath a (p1 ': p2))) where
-  getField = coerce
-instance HasField sym (AtPath (Maybe a) (Field Optional NonArray sym ': p1 ': p2)) (Maybe (AtPath a (p1 ': p2))) where
-  getField = coerce
-instance HasField sym (AtPath (Maybe a) (Field Nullable NonArray sym ': p1 ': p2)) (Maybe (AtPath a (p1 ': p2))) where
-  getField = coerce
-instance
-  Coercible (f a) (f (AtPath a (p1 ': p2)))
-    => HasField sym (AtPath (Maybe (f a)) (Field Optional Array sym ': p1 ': p2)) (Maybe (f (AtPath a (p1 ': p2)))) where
-  getField = coerce
-instance
-  Coercible (f a) (f (AtPath a (p1 ': p2)))
-    => HasField sym (AtPath (Maybe (f a)) (Field Nullable Array sym ': p1 ': p2)) (Maybe (f (AtPath a (p1 ': p2)))) where
+  ( resTy ~ ThrowIfNothing sym (AtPathFieldType sym (AtPath a path))
+  , Coercible resTy (AtPath a path)
+  ) => HasField sym (AtPath a path) resTy where
   getField = coerce

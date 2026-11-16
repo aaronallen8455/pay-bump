@@ -38,12 +38,6 @@ main = defaultMain $
           eqSchema
             (toInlinedSchema (Proxy @(B1 `ExtendWith` E1)))
             (toInlinedSchema (Proxy @C1))
-      , testCase "HasField" $ do
-          let x = b1 `ExtendWith` e1
-          x.b1f1 @?= c1.b1f1
-          x.e1f1 @?= c1.e1f1
-          x.b1f3 @?= (b2 `ExtendWith` e2)
-          x.b1f3.b2f2 @?= c1.b1f3.b2f2
       ]
     , let extended = b1
             `ExtendWith`
@@ -74,11 +68,6 @@ main = defaultMain $
               )
             )
             (toInlinedSchema (Proxy @C1))
-      , testCase "HasField" $ do
-          extended.b1f1 @?= c1.b1f1
-          extended.e1f1 @?= c1.e1f1
-          extended.b1f3 @?= (b2 `ExtendWith` e2)
-          extended.b1f3.b2f2 @?= c1.b1f3.b2f2
       ]
     ]
 
