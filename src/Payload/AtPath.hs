@@ -36,6 +36,7 @@ import qualified Data.List as List
 import qualified Data.OpenApi as OpenApi
 import           Data.Proxy
 import qualified Data.Text as T
+import           GHC.Records
 import           GHC.TypeLits
 
 type Path = [PathField]
@@ -308,3 +309,28 @@ instance
         , OpenApi._schemaType = Just OpenApi.OpenApiObject
         }
       }
+
+--------------------------------------------------------------------------------
+-- HasField instance
+--------------------------------------------------------------------------------
+
+instance HasField sym (AtPath a '[Field o c sym]) a where
+  getField (AtPath a) = a
+instance HasField sym (AtPath a (Field Required NonArray sym ': p1 ': p2)) (AtPath a (p1 ': p2)) where
+  getField = coerce
+instance
+  Coercible (f a) (f (AtPath a (p1 ': p2)))
+    => HasField sym (AtPath (f a) (Field Required Array sym ': p1 ': p2)) (f (AtPath a (p1 ': p2))) where
+  getField = coerce
+instance HasField sym (AtPath (Maybe a) (Field Optional NonArray sym ': p1 ': p2)) (Maybe (AtPath a (p1 ': p2))) where
+  getField = coerce
+instance HasField sym (AtPath (Maybe a) (Field Nullable NonArray sym ': p1 ': p2)) (Maybe (AtPath a (p1 ': p2))) where
+  getField = coerce
+instance
+  Coercible (f a) (f (AtPath a (p1 ': p2)))
+    => HasField sym (AtPath (Maybe (f a)) (Field Optional Array sym ': p1 ': p2)) (Maybe (f (AtPath a (p1 ': p2)))) where
+  getField = coerce
+instance
+  Coercible (f a) (f (AtPath a (p1 ': p2)))
+    => HasField sym (AtPath (Maybe (f a)) (Field Nullable Array sym ': p1 ': p2)) (Maybe (f (AtPath a (p1 ': p2)))) where
+  getField = coerce

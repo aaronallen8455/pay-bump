@@ -74,6 +74,11 @@ main = defaultMain $
               )
             )
             (toInlinedSchema (Proxy @C1))
+      , testCase "HasField" $ do
+          extended.b1f1 @?= c1.b1f1
+          extended.e1f1 @?= c1.e1f1
+          extended.b1f3 @?= (b2 `ExtendWith` e2)
+          extended.b1f3.b2f2 @?= c1.b1f3.b2f2
       ]
     ]
 
