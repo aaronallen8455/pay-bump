@@ -17,6 +17,7 @@ module Payload.AtPath
   , Opt
   , Arr
   , OptArr
+  , AtPathFieldTypeMay
   , AtPathFieldType
   ) where
 
@@ -315,31 +316,35 @@ instance
 -- HasField instance
 --------------------------------------------------------------------------------
 
-type AtPathFieldType :: Symbol -> Type -> Maybe Type
-type family AtPathFieldType sym a where
-  AtPathFieldType sym (AtPath a '[Field o c sym])
+type AtPathFieldTypeMay :: Symbol -> Type -> Maybe Type
+type family AtPathFieldTypeMay sym a where
+  AtPathFieldTypeMay sym (AtPath a '[Field o c sym])
     = Just a
-  AtPathFieldType sym (AtPath a (Field Required NonArray sym ': p1 ': p2))
+  AtPathFieldTypeMay sym (AtPath a (Field Required NonArray sym ': p1 ': p2))
     = Just (AtPath a (p1 ': p2))
-  AtPathFieldType sym (AtPath (f a) (Field Required Array sym ': p1 ': p2))
+  AtPathFieldTypeMay sym (AtPath (f a) (Field Required Array sym ': p1 ': p2))
     = Just (f (AtPath a (p1 ': p2)))
-  AtPathFieldType sym (AtPath (Maybe a) (Field Optional NonArray sym ': p1 ': p2))
+  AtPathFieldTypeMay sym (AtPath (Maybe a) (Field Optional NonArray sym ': p1 ': p2))
     = Just (Maybe (AtPath a (p1 ': p2)))
-  AtPathFieldType sym (AtPath (Maybe a) (Field Nullable NonArray sym ': p1 ': p2))
+  AtPathFieldTypeMay sym (AtPath (Maybe a) (Field Nullable NonArray sym ': p1 ': p2))
     = Just (Maybe (AtPath a (p1 ': p2)))
-  AtPathFieldType sym (AtPath (Maybe (f a)) (Field Optional Array sym ': p1 ': p2))
+  AtPathFieldTypeMay sym (AtPath (Maybe (f a)) (Field Optional Array sym ': p1 ': p2))
     = Just (Maybe (f (AtPath a (p1 ': p2))))
-  AtPathFieldType sym (AtPath (Maybe (f a)) (Field Nullable Array sym ': p1 ': p2))
+  AtPathFieldTypeMay sym (AtPath (Maybe (f a)) (Field Nullable Array sym ': p1 ': p2))
     = Just (Maybe (f (AtPath a (p1 ': p2))))
-  AtPathFieldType sym other = Nothing
+  AtPathFieldTypeMay sym other = Nothing
 
 type ThrowIfNothing :: Symbol -> Maybe k -> k
 type family ThrowIfNothing sym a where
   ThrowIfNothing sym Nothing = TypeError ((Text "Field not found: ") :<>: Text sym)
   ThrowIfNothing sym (Just a) = a
 
+type AtPathFieldType :: Symbol -> Type -> Type
+type family AtPathFieldType sym a where
+  AtPathFieldType sym a = ThrowIfNothing sym (AtPathFieldTypeMay sym a)
+
 instance
-  ( resTy ~ ThrowIfNothing sym (AtPathFieldType sym (AtPath a path))
+  ( resTy ~ AtPathFieldType sym (AtPath a path)
   , Coercible resTy (AtPath a path)
   ) => HasField sym (AtPath a path) resTy where
   getField = coerce

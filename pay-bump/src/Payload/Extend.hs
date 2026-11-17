@@ -6,6 +6,7 @@
 module Payload.Extend
   ( ExtendWith(..)
   , zipExtended
+  , traverseExtended
   , mergeAesonValues
   , extendDeclareNamedSchemas
   , module AtPath
@@ -19,7 +20,9 @@ import           Control.Monad.State
 import           Control.Monad.Trans.Maybe
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.KeyMap as KeyMap
+import           Data.Bifoldable
 import           Data.Bifunctor
+import           Data.Bitraversable
 import           Data.Coerce
 import qualified Data.Generics as Syb
 #if MIN_VERSION_openapi3(3,2,5)
@@ -54,8 +57,27 @@ instance Bifunctor ExtendWith where
   first f (a `ExtendWith` ext) = f a `ExtendWith` ext
   second = fmap
 
+instance Bifoldable ExtendWith where
+  bifoldMap f g (a `ExtendWith` ext) = f a <> g ext
+
+instance Bitraversable ExtendWith where
+  bitraverse f g (a `ExtendWith` ext) = liftA2 ExtendWith (f a) (g ext)
+
 zipExtended :: SA.Zip f => f a `ExtendWith` f b -> f (a `ExtendWith` b)
 zipExtended (fa `ExtendWith` fb) = SA.zipWith ExtendWith fa fb
+
+traverseExtended
+  :: (SA.Zip t, Traversable t, Applicative f)
+  => (a `ExtendWith` b -> f (a' `ExtendWith` b'))
+  -> t a `ExtendWith` t b
+  -> f (t a' `ExtendWith` t b')
+traverseExtended f e
+  = fmap
+      ( uncurry ExtendWith
+      . SA.unzipWith (\(a `ExtendWith` b) -> (a, b))
+      )
+  . traverse f
+  $ zipExtended e
 
 instance (Aeson.ToJSON ext, Aeson.ToJSON base) => Aeson.ToJSON (base `ExtendWith` ext) where
   toJSON (base `ExtendWith` ext) = mergeAesonValues (Aeson.toJSON ext) (Aeson.toJSON base)

@@ -5,6 +5,9 @@
 {-# LANGUAGE TypeFamilies #-}
 module Payload.Extend.Generics
   ( module Extend
+  , GetFieldFromExtended
+  , FieldResultToType
+  , GetFieldResult(..)
   ) where
 
 import           Data.Kind
@@ -45,7 +48,7 @@ type GetFieldType :: Symbol -> Type -> Maybe Type
 type family GetFieldType sym a where
   GetFieldType sym (l `ExtendWith` r) =
     FieldResultToMaybe (GetFieldFromExtendedMay sym l r)
-  GetFieldType sym (AtPath a path) = AtPathFieldType sym (AtPath a path)
+  GetFieldType sym (AtPath a path) = AtPathFieldTypeMay sym (AtPath a path)
   GetFieldType sym a = GetFieldFromRep sym (Rep a)
 
 type GetFieldFromRep :: Symbol -> (Type -> Type) -> Maybe Type
