@@ -1,14 +1,14 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 {-# LANGUAGE UndecidableInstances #-}
 module Payload.Extend.Generics.Lens
-  (
+  ( module Generics
   ) where
 
 import           Data.Coerce
 import           Data.Generics.Internal.VL
 import           Data.Generics.Product.Fields
 import           Data.Proxy
-import           Payload.Extend.Generics
+import           Payload.Extend.Generics as Generics
 
 instance {-# OVERLAPPING #-}
   ( res ~ AtPathFieldType sym (AtPath a path)

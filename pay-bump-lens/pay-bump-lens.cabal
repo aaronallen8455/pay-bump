@@ -27,7 +27,7 @@ library
     hs-source-dirs:   src
     default-language: GHC2021
 
-test-suite pay-bump-generics-test
+test-suite pay-bump-lens-test
     import:           warnings
     default-language: GHC2021
     -- other-modules:
@@ -37,6 +37,8 @@ test-suite pay-bump-generics-test
     main-is:          Main.hs
     build-depends:
         base,
+        pay-bump-generics,
         pay-bump-lens,
+        generic-lens,
         tasty,
         tasty-hunit
