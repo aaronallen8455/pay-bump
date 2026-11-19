@@ -2,6 +2,8 @@
 {-# LANGUAGE UndecidableInstances #-}
 module Payload.Extend.Generics.Optics
   ( module Generics
+  , baseLens
+  , extLens
   ) where
 
 import           Data.Coerce
@@ -17,7 +19,9 @@ instance {-# OVERLAPPING #-}
   field' = lens coerce (\_ res -> coerce res)
 
 instance {-# OVERLAPPING #-}
-  ( gfRes ~ GetFieldFromExtended sym b ext
+  ( RequireGeneric b
+  , RequireGeneric ext
+  , gfRes ~ GetFieldFromExtended sym b ext
   , resTy ~ FieldResultToType gfRes
   , HasFieldAux sym gfRes (ExtendWith b ext)
   ) => HasField' sym (b `ExtendWith` ext) resTy where
@@ -31,11 +35,11 @@ class HasFieldAux sym fieldRes a where
 
 instance HasField' sym l resTy
     => HasFieldAux sym (LeftOnly resTy) (l `ExtendWith` r) where
-  fieldAux _ _ = extendedLeft % field' @sym
+  fieldAux _ _ = baseLens % field' @sym
 
 instance HasField' sym r resTy
     => HasFieldAux sym (RightOnly resTy) (l `ExtendWith` r) where
-  fieldAux _ _ = extendedRight % field' @sym
+  fieldAux _ _ = extLens % field' @sym
 
 instance
   ( HasField' sym l lRes
@@ -47,8 +51,8 @@ instance
       setter (l `ExtendWith` r) (lr `ExtendWith` rr) =
         (field' @sym .~ lr) l `ExtendWith` (field' @sym .~ rr) r
 
-extendedLeft :: Lens (l `ExtendWith` r) (l' `ExtendWith` r) l l'
-extendedLeft = lens (\(l `ExtendWith` _) -> l) (\(_ `ExtendWith` r) l -> l `ExtendWith` r)
+baseLens :: Lens (l `ExtendWith` r) (l' `ExtendWith` r) l l'
+baseLens = lens (\(l `ExtendWith` _) -> l) (\(_ `ExtendWith` r) l -> l `ExtendWith` r)
 
-extendedRight :: Lens (l `ExtendWith` r) (l `ExtendWith` r') r r'
-extendedRight = lens (\(_ `ExtendWith` r) -> r) (\(l `ExtendWith` _) r -> l `ExtendWith` r)
+extLens :: Lens (l `ExtendWith` r) (l `ExtendWith` r') r r'
+extLens = lens (\(_ `ExtendWith` r) -> r) (\(l `ExtendWith` _) r -> l `ExtendWith` r)

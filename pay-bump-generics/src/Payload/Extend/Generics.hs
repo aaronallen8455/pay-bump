@@ -8,6 +8,7 @@ module Payload.Extend.Generics
   , GetFieldFromExtended
   , FieldResultToType
   , GetFieldResult(..)
+  , RequireGeneric
   ) where
 
 import           Data.Kind

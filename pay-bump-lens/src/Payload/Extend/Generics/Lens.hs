@@ -2,6 +2,8 @@
 {-# LANGUAGE UndecidableInstances #-}
 module Payload.Extend.Generics.Lens
   ( module Generics
+  , baseLens
+  , extLens
   ) where
 
 import           Data.Coerce
@@ -17,7 +19,9 @@ instance {-# OVERLAPPING #-}
   field' f atPath = fmap coerce (f (coerce atPath))
 
 instance {-# OVERLAPPING #-}
-  ( gfRes ~ GetFieldFromExtended sym b ext
+  ( RequireGeneric b
+  , RequireGeneric ext
+  , gfRes ~ GetFieldFromExtended sym b ext
   , resTy ~ FieldResultToType gfRes
   , HasFieldAux sym gfRes (ExtendWith b ext)
   ) => HasField' sym (b `ExtendWith` ext) resTy where
@@ -31,20 +35,24 @@ class HasFieldAux sym fieldRes a where
 
 instance HasField' sym l resTy
     => HasFieldAux sym (LeftOnly resTy) (l `ExtendWith` r) where
-  fieldAux _ _ f (l `ExtendWith` r) = (`ExtendWith` r) <$> field' @sym @l f l
+  fieldAux _ _ = baseLens . field' @sym
 
 instance HasField' sym r resTy
     => HasFieldAux sym (RightOnly resTy) (l `ExtendWith` r) where
-  fieldAux _ _ f (l `ExtendWith` r) = (l `ExtendWith`) <$> field' @sym @r f r
+  fieldAux _ _ = extLens . field' @sym
 
 instance
   ( HasField' sym l lRes
   , HasField' sym r rRes
   ) => HasFieldAux sym (Both lRes rRes) (l `ExtendWith` r) where
-  fieldAux _ _ f (l `ExtendWith` r)
-    = fmap
-        (\(lr `ExtendWith` rr) ->
-          (field' @sym .~ lr) l `ExtendWith` (field' @sym .~ rr) r
-        )
-      . f
-      $ (l ^. field' @sym) `ExtendWith` (r ^. field' @sym)
+  fieldAux _ _ = lens getter setter
+    where
+      getter (l `ExtendWith` r) = (l ^. field' @sym) `ExtendWith` (r ^. field' @sym)
+      setter (l `ExtendWith` r) (lr `ExtendWith` rr) =
+        (field' @sym .~ lr) l `ExtendWith` (field' @sym .~ rr) r
+
+baseLens :: Lens (b `ExtendWith` e) (b' `ExtendWith` e) b b'
+baseLens = lens (\(b `ExtendWith` _) -> b) (\(_ `ExtendWith` e) b -> b `ExtendWith` e)
+
+extLens :: Lens (b `ExtendWith` e) (b `ExtendWith` e') e e'
+extLens = lens (\(_ `ExtendWith` e) -> e) (\(b `ExtendWith` _) e -> b `ExtendWith` e)
